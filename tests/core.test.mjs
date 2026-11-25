@@ -41,3 +41,6 @@ test('solar direction compared with independent ephemeris',()=>{for(const [date,
 import {visibilityEstimate,contactEvents} from '../public/core.mjs';
 test('missing terrain does not turn an estimated visible disk into a confirmed visible disk',()=>{const s={az:0,alt:10,radius:.266};const v=visibilityEstimate(s,()=>9,()=>false);assert.equal(v.estimate,1);assert.equal(v.lower,0);assert.equal(v.upper,1);assert.equal(v.uncertain,true);const b=visibilityEstimate(s,()=>11,()=>false);assert.equal(b.upper,0);assert.equal(b.uncertain,false);assert.equal(visibilityEstimate(s,()=>null,()=>false).estimate,null)});
 test('contact search resolves both transitions in a single interval',()=>{const e=contactEvents(t=>({state:t<.1?0:t<.2?1:2,uncertain:false}),0,1,.25);assert.equal(e.length,2);assert.ok(Math.abs(e[0].minute-.1)<=1/60);assert.ok(Math.abs(e[1].minute-.2)<=1/60);assert.equal(e[0].to,1);assert.equal(e[1].to,2)});
+
+import {projectTerrainRay} from '../public/core.mjs';
+test('compact retained ray matches original visible surface for multiple eye heights',()=>{const samples=[{d:2,h:100},{d:10,h:105},{d:20,h:null},{d:30,h:120},{d:100,h:110}];const ds=Float64Array.from(samples,p=>p.d),hs=Float64Array.from(samples,p=>p.h??NaN);for(const height of [0,1.6,10,30,300])assert.deepEqual(projectTerrainRay(ds,hs,100,height),visibleSurface(samples,100+height,height))});

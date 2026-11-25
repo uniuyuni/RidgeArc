@@ -166,3 +166,20 @@ export function contactEvents(evaluate,start=0,end=1440,interval=.25){
  }
  return out;
 }
+
+// Retained DEM samples: changing eye height must not trigger network requests.
+export function projectTerrainRay(distances,heights,ground,height){
+ const eye=ground+height,segments=[];let max=-Infinity,prevD=0,prevH=-Math.max(height,.001),gap=false;
+ for(let i=0;i<distances.length;i++){
+  const d=distances[i],e=heights[i];
+  if(!Number.isFinite(e)){if(prevD>0)gap=true;continue;}
+  const h=e-eye-d*d/(2*6371000),s=h/d;
+  if(s>max){
+   if(!gap&&d>prevD){const m=(h-prevH)/(d-prevD);segments.push({hi:s,m,b:h-m*d,d,near:prevD})}
+   else segments.push({hi:s,m:0,b:0,d,near:d});
+   max=s;
+  }
+  prevD=d;prevH=h;gap=false;
+ }
+ return {segments,angle:segments.length?Math.atan(max)*180/Math.PI:null};
+}

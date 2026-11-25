@@ -1,7 +1,9 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 const todayJST=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
 let config={lat:35.416459,lon:139.048985,height:1.6,date:todayJST},profile=null,coverage=0,day=[],timer=null,frame=null,terrainStatus='';
+let terrainData=null,busy=false,pending=null,changeTimer=null,settleTimer=null,desired=null;
+const pointKey=c=>[c.lat,c.lon].join('/');
 $('date').value=todayJST;
 // High-resolution requests are restricted to the immediate foreground.
 const bands=[
@@ -20,25 +22,34 @@ const sourcePlan=[
  {id:'dem_png',name:'中景',z:13,groups:['mid'],smooth:false,minD:0},
  {id:'dem_png',name:'遠景',z:10,groups:['far'],smooth:false,minD:0}
 ];
-const tiles=new Map();
+const tiles=new Map(),MAX_TILES=256;
 function getTile(key){
- if(tiles.has(key))return tiles.get(key);
+ if(tiles.has(key)){
+  const entry=tiles.get(key);
+  if(!entry.retryAt||Date.now()<entry.retryAt){tiles.delete(key);tiles.set(key,entry);return entry.task;}
+  tiles.delete(key);
+ }
  const task=(async()=>{
   const response=await fetch('https://cyberjapandata.gsi.go.jp/xyz/'+key+'.png',{signal:AbortSignal.timeout(15000)});
-  if(!response.ok)return null;
+  if(response.status===404)return null;
+  if(!response.ok)throw Error('HTTP '+response.status);
   const bmp=await createImageBitmap(await response.blob(),{colorSpaceConversion:'none'});
   const c=document.createElement('canvas');c.width=256;c.height=256;
   const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(bmp,0,0);bmp.close();
   return g.getImageData(0,0,256,256).data;
- })().catch(()=>null);
- tiles.set(key,task);return task;
+ })();
+ const entry={task:null,retryAt:0};
+ entry.task=task.then(data=>{if(data==null)entry.retryAt=Date.now()+300000;return data;}).catch(()=>{if(tiles.get(key)===entry)tiles.delete(key);return null;});
+ tiles.set(key,entry);
+ while(tiles.size>MAX_TILES)tiles.delete(tiles.keys().next().value);
+ return entry.task;
 }
 function recomputeDay(){day=Array.from({length:1440},(_,m)=>sunPosition(config.date,m,config.lat,config.lon));frame=daylightFrame(day)}
 function lookup(p,loaded,source){const a=loaded.get(source+'/'+p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
 function stencil(sample,source){
  return source.smooth?elevationStencil(sample.lat,sample.lon,source.z):[{...tilePixel(sample.lat,sample.lon,source.z),w:1}];
 }
-async function resolveSamples(samples,ground,source,stats){
+async function resolveSamples(samples,ground,source,stats,isCurrent){
  const candidates=samples.filter(p=>p.h==null&&source.groups.includes(p.group)&&p.d>=source.minD);
  if(!candidates.length&&ground.h!=null)return;
  if(!candidates.length&&!source.smooth)return;
@@ -47,10 +58,11 @@ async function resolveSamples(samples,ground,source,stats){
  if(source.smooth)for(const q of stencil(ground,source))keys.add(source.id+'/'+q.key);
  const loaded=new Map(),queue=[...keys];let done=0;
  await Promise.all(Array.from({length:6},async()=>{
-  while(queue.length){const key=queue.pop();loaded.set(key,await getTile(key));done++;
-   $('status').textContent='標高取得 '+source.name+' '+done+'/'+keys.size+' タイル';
+  while(queue.length&&isCurrent()){const key=queue.pop();loaded.set(key,await getTile(key));done++;
+   if(isCurrent())$('status').textContent='標高取得 '+source.name+' '+done+'/'+keys.size+' タイル';
   }
  }));
+ if(!isCurrent())return;
  const read=p=>lookup(p,loaded,source.id);
  const localGround=source.smooth?interpolatedHeight(stencil(ground,source),read):null;
  if(ground.h==null&&localGround!=null){ground.h=localGround;ground.source=source.name}
@@ -64,39 +76,92 @@ async function resolveSamples(samples,ground,source,stats){
  }
  stats[source.name]=(stats[source.name]||0)+used;
 }
-async function compute(){
- $('load').disabled=true;profile=null;coverage=0;tiles.clear();recomputeDay();render();events();
- const rays=[],samples=[],ground={lat:config.lat,lon:config.lon,h:null};
+async function loadTerrain(target,isCurrent){
+ const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};
+ const distances=Float64Array.from(bands.flatMap(b=>Array.from({length:Math.floor((b.end-b.start)/b.inc)+1},(_,i)=>b.start+i*b.inc)));
  for(let i=0;i<N;i++){
   const row=[];
   for(const band of bands){
-   const segment=[];
    for(let d=band.start;d<=band.end;d+=band.inc){
-    const [lat,lon]=destination(config.lat,config.lon,i*step,d);
-    const p={lat,lon,d,group:band.quality,h:null};samples.push(p);segment.push(p);
-   }row.push(segment);
+    const [lat,lon]=destination(target.lat,target.lon,i*step,d);
+    const p={lat,lon,d,group:band.quality,h:null};samples.push(p);row.push(p);
+   }
   }rays.push(row);
+  if(i%120===119){await new Promise(r=>setTimeout(r,0));if(!isCurrent())return null;}
  }
  const stats={};
- for(const source of sourcePlan)await resolveSamples(samples,ground,source,stats);
+ for(const source of sourcePlan){if(!isCurrent())return null;await resolveSamples(samples,ground,source,stats,isCurrent);}
+ if(!isCurrent())return null;
  if(ground.h==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
- const eye=ground.h+config.height,total=[],surfaces=[],complete=[];
- let valid=0,count=0;
- for(const ray of rays){
-  const samples=ray.flat();
-  let rayValid=0,rayCount=0;
-  for(const p of samples){if(p.d<10&&p.h==null)continue;count++;rayCount++;if(p.h!=null){valid++;rayValid++;}}
-  complete.push(rayCount>0&&rayValid===rayCount);
-  // No distance-band silhouettes: use all terrain samples in increasing range.
-  const surface=visibleSurface(samples,eye,config.height);
-  surfaces.push(surface);total.push(surface.angle);
+ const heights=[],complete=[];let valid=0,count=0;
+ for(const row of rays){
+  let rv=0,rc=0;
+  heights.push(Float64Array.from(row,p=>p.h??NaN));
+  for(const p of row){if(p.d<10&&p.h==null)continue;count++;rc++;if(p.h!=null){valid++;rv++;}}
+  complete.push(rc>0&&rv===rc);
  }
- coverage=count?valid/count:0;
- profile={total,surfaces,complete,eye,locationKey:[config.lat,config.lon,config.height].join('/'),bounds:terrainBounds(frame,[total],step),terrainCache:null};
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
- terrainStatus='観測高 '+eye.toFixed(1)+'m（'+ground.source+' DEM＋指定高）｜近距離 '+(detail||'取得なし')+'｜サンプル取得率 '+Math.round(coverage*100)+'%｜'+tiles.size+'タイル。'+(coverage<.999?'欠損のため遮蔽判定は暫定。':'70km以遠と植生は未考慮。');
- $('status').textContent=terrainStatus;
- tiles.clear();render();events();
+ return {key:pointKey(target),distances,heights,complete,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0};
+}
+function applyTerrain(target,preview=false){
+ const samePoint=pointKey(config)===pointKey(target),sameHeight=config.height===target.height,sameDate=config.date===target.date;
+ config={...target};
+ if(!samePoint||!sameDate||!day.length)recomputeDay();
+ if(!terrainData||terrainData.key!==pointKey(target)){profile=null;return;}
+ if(!profile||!samePoint||!sameHeight){
+  const surfaces=terrainData.heights.map(h=>projectTerrainRay(terrainData.distances,h,terrainData.ground,target.height));
+  const total=surfaces.map(s=>s.angle);
+  profile={total,surfaces,complete:terrainData.complete,eye:terrainData.ground+target.height,bounds:terrainBounds(frame,[total],step),terrainCache:null};
+ }else if(!sameDate){profile.bounds=terrainBounds(frame,[profile.total],step);profile.terrainCache=null;}
+ coverage=terrainData.coverage;
+ terrainStatus='地表標高 '+terrainData.ground.toFixed(1)+'m ｜ 視点標高 '+profile.eye.toFixed(1)+'m（地上高 '+target.height.toFixed(1)+'m）｜ '+terrainData.source+' DEM ｜ 近距離 '+(terrainData.detail||'取得なし')+' ｜ 取得率 '+Math.round(coverage*100)+'%';
+ $('status').textContent=terrainStatus+(preview?' ｜ 更新中…':'')+(coverage<.999?' ｜ 欠損あり':'');
+ render(preview);
+ clearTimeout(settleTimer);
+ if(preview){$('events').textContent='遮蔽時刻を更新中…';settleTimer=setTimeout(()=>{if(!busy&&!pending&&desired&&pointKey(desired)===pointKey(config)&&desired.height===config.height&&desired.date===config.date){render();events();$('status').textContent=terrainStatus+(coverage<.999?' ｜ 欠損あり':'');}},240);}
+ else events();
+}
+function readConfig(){
+ const fields=['lat','lon','height','date'].map($);
+ if(fields.some(f=>!f.value||!f.validity.valid))return null;
+ const c={lat:+$('lat').value,lon:+$('lon').value,height:+$('height').value,date:$('date').value};
+ return [c.lat,c.lon,c.height].every(Number.isFinite)&&Number.isFinite(Date.parse(c.date+'T00:00:00+09:00'))?c:null;
+}
+function scheduleUpdate(delay=150,preview=false){
+ const c=readConfig();if(!c)return;
+ desired=c;clearTimeout(changeTimer);clearTimeout(settleTimer);
+ // Invalidate immediately when the chosen location changes; never show old terrain as current.
+ if(pointKey(c)!==pointKey(config)){
+  if(profile){profile=null;coverage=0;}
+  config={...c};recomputeDay();render();$('events').textContent='新しい地点の地形を計算中…';
+  $('status').textContent='地点変更：標高を準備中…';
+ }
+ if(terrainData?.key===pointKey(c)&&!busy){
+  pending=null;changeTimer=setTimeout(()=>applyTerrain(c,preview),delay);return;
+ }
+ pending=c;
+ changeTimer=setTimeout(()=>runPending(),delay);
+}
+async function runPending(){
+ if(busy||!pending)return;
+ busy=true;$('load').textContent='計算中…';$('load').disabled=true;
+ try{
+  while(pending){
+   const target=pending;pending=null;
+   const key=pointKey(target),current=()=>desired&&pointKey(desired)===key;
+   if(terrainData?.key!==key){
+    let result;
+    try{result=await loadTerrain(target,current)}catch(e){if(!current())continue;throw e;}
+    if(!result||!current())continue;
+    terrainData=result;
+   }
+   if(!current())continue;
+   const latest=desired;
+   if(pending&&pointKey(pending)===key)pending=null;
+   applyTerrain(latest);
+  }
+ }catch(e){profile=null;coverage=0;$('status').textContent='計算失敗：'+e.message;render();events();}
+ finally{busy=false;$('load').disabled=false;$('load').textContent='再計算';if(pending)runPending();}
 }
 function horizon(a){return profile?horizonAt(profile.total,a,step):null}
 function directionComplete(a){
@@ -124,7 +189,7 @@ function events(){
  }
  if(!box.children.length)box.textContent='取得済み地形で判定できる変化なし（欠損・短時間の変化は未検出の場合があります）。';
 }
-function render(){
+function render(preview=false){
  const f=frame||daylightFrame(day),{center,span}=f,left=center-span/2,right=center+span/2;
  let top=f.top,bottom=f.bottom;
  if(profile){const bounds=profile.bounds;top=Math.max(top,panoramaY(bounds.high));bottom=Math.min(bottom,panoramaY(bounds.low));}
@@ -174,22 +239,23 @@ function render(){
  // pixels so time slider changes do not recalculate the geometry.
  if(profile){
   const shaded=$('layers').checked;
-  const key=[plotW,plotH,left,span,top,bottom,shaded].join('/');
+  const rasterW=preview===true?Math.ceil(plotW/2):plotW,rasterH=preview===true?Math.ceil(plotH/2):plotH,sx=plotW/rasterW,sy=plotH/rasterH;
+  const key=[plotW,plotH,left,span,top,bottom,shaded,rasterW].join('/');
   if(profile.terrainCache?.key!==key){
-   const terrain=document.createElement('canvas');terrain.width=plotW;terrain.height=plotH;
-   const tc=terrain.getContext('2d'),img=tc.createImageData(plotW,plotH),pixels=img.data;
-   const slopes=Float64Array.from({length:plotH},(_,y)=>Math.tan(panoramaAltitude(top-(y+.5)/scale)*DEG));
+   const terrain=document.createElement('canvas');terrain.width=rasterW;terrain.height=rasterH;
+   const tc=terrain.getContext('2d'),img=tc.createImageData(rasterW,rasterH),pixels=img.data;
+   const slopes=Float64Array.from({length:rasterH},(_,y)=>Math.tan(panoramaAltitude(top-(y+.5)*sy/scale)*DEG));
    const color=d=>{
     // Continuous atmospheric distance cue; not a physical illumination model.
     const t=clamp(Math.log1p(d/30)/Math.log1p(70000/30),0,1);
     return t;
    };
-   for(let x=0;x<plotW;x++){
-    const az=wrap(left+(x+.5)/scale),f=az/step,i=Math.floor(f)%N,j=(i+1)%N,w=f-Math.floor(f);
+   for(let x=0;x<rasterW;x++){
+    const az=wrap(left+(x+.5)*sx/scale),f=az/step,i=Math.floor(f)%N,j=(i+1)%N,w=f-Math.floor(f);
     const h=horizon(az);if(h==null)continue;
-    const y0=clamp(Math.floor((top-panoramaY(h))*scale),0,plotH);
-    for(let y=y0;y<plotH;y++){
-     const cover=clamp(y+1-(top-panoramaY(h))*scale,0,1);
+    const edge=(top-panoramaY(h))*scale/sy,y0=clamp(Math.floor(edge),0,rasterH);
+    for(let y=y0;y<rasterH;y++){
+     const cover=clamp(y+1-edge,0,1);
      if(cover<=0)continue;
      let t=0;
      if(shaded){
@@ -197,13 +263,13 @@ function render(){
       if(d0==null&&d1==null)continue;
       t=d0==null?color(d1):d1==null?color(d0):color(d0)*(1-w)+color(d1)*w;
      }
-     const k=(y*plotW+x)*4;
+     const k=(y*rasterW+x)*4;
      pixels[k]=Math.round(25+107*t);pixels[k+1]=Math.round(43+108*t);pixels[k+2]=Math.round(56+112*t);pixels[k+3]=Math.round(255*cover);
     }
    }
    tc.putImageData(img,0,0);profile.terrainCache={key,terrain};
   }
-  ctx.drawImage(profile.terrainCache.terrain,48,22);
+  ctx.drawImage(profile.terrainCache.terrain,48,22,plotW,plotH);
  }
  if($('path').checked){
   // Show the complete swept disk even when it lies behind a ridge; the solid
@@ -213,7 +279,7 @@ function render(){
   ctx.font='12px system-ui';ctx.fillStyle='#fff4d8';ctx.textAlign='center';
   for(let i=0;i<1440;i+=60){const p=day[i],q=p&&p.alt>=0?project(p.az,p.alt):null;if(q&&q[0]>68&&q[0]<48+plotW-20&&q[1]>42&&q[1]<22+plotH)ctx.fillText(clock(i),q[0],q[1]-8);}
  }
- if(!profile){ctx.fillStyle='#e2edf5';ctx.font='16px system-ui';ctx.textAlign='center';ctx.fillText('地形未計算 — 「地形を計算」を押してください',width/2,22+plotH/2);}
+ if(!profile){ctx.fillStyle='#e2edf5';ctx.font='16px system-ui';ctx.textAlign='center';ctx.fillText('地形データを準備中／地点を選択してください',width/2,22+plotH/2);}
  ctx.restore();ctx.font='12px system-ui';ctx.fillStyle='#c7d5df';ctx.textAlign='center';
  for(let px=48;px<=48+plotW;px+=plotW/6){const [a]=rayAt(px,cy);ctx.fillText(Math.round(a)%360+'°',px,22+plotH+18)}
  ctx.textAlign='right';for(let py=22;py<=22+plotH;py+=plotH/5){const [,h]=rayAt(cx,py);ctx.fillText(Math.round(h)+'°',43,py+4)}
@@ -234,8 +300,8 @@ function selectPoint(lat,lon,pan=false){
  if(lat<20||lat>46||lon<122||lon>154){$('mapstatus').textContent='現在は日本国内向けです。';return}
  $('lat').value=lat.toFixed(6);$('lon').value=lon.toFixed(6);
  if(marker){marker.setLatLng([lat,lon]);if(pan)map.setView([lat,lon],Math.max(map.getZoom(),13))}
- $('mapstatus').textContent='選択地点 '+lat.toFixed(6)+', '+lon.toFixed(6)+' — 地形を計算してください。';
- updateMapDirection();
+ $('mapstatus').textContent='選択地点 '+lat.toFixed(6)+', '+lon.toFixed(6)+' — 自動更新';
+ updateMapDirection();scheduleUpdate(250);
 }
 function initMap(){
  if(!window.L){$('mapstatus').textContent='地図の読み込みに失敗。緯度・経度の直接入力は可能です。';return}
@@ -265,19 +331,18 @@ function initMap(){
  $('place').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('search').click()}});
  updateMapDirection();
 }
-$('location').addEventListener('submit',async e=>{
- e.preventDefault();config={lat:+$('lat').value,lon:+$('lon').value,height:+$('height').value,date:$('date').value};
- if(!Number.isFinite(Date.parse(config.date+'T00:00:00+09:00')))return;
- try{
-  if(profile&&profile.locationKey===[config.lat,config.lon,config.height].join('/')){
-   recomputeDay();profile.bounds=terrainBounds(frame,[profile.total],step);profile.terrainCache=null;
-   $('status').textContent=terrainStatus+' 日付変更：標高データ再利用。';render();events();
-  }else await compute();
- }catch(err){profile=null;$('status').textContent='計算失敗：'+err.message;render();events()}finally{$('load').disabled=false}
-});
+$('location').addEventListener('submit',e=>{e.preventDefault();scheduleUpdate(0);});
+function syncHeight(){
+ const h=+$('height').value;if(!Number.isFinite(h)||!$('height').validity.valid)return;
+ $('heightRange').max=Math.max(30,Math.ceil(h/10)*10);$('heightRange').value=h;
+}
+$('height').addEventListener('input',()=>{syncHeight();scheduleUpdate(90,true)});
+$('heightRange').addEventListener('input',()=>{$('height').value=$('heightRange').value;scheduleUpdate(90,true)});
+for(const id of ['height','heightRange'])$(id).addEventListener('change',()=>scheduleUpdate(0));
+$('date').addEventListener('change',()=>scheduleUpdate(0));
 for(const id of ['time','zoom','grid','path','layers','light'])$(id).addEventListener('input',render);
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});
 $('save').addEventListener('click',()=>{canvas.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RidgeArc-'+config.date+'-'+clock(+$('time').value).replace(':','')+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)})});
 recomputeDay();render();
 $('resetZoom').addEventListener('click',()=>{$('zoom').value=100;render();canvas.parentElement.scrollLeft=0});
-initMap();
+initMap();syncHeight();scheduleUpdate(0);
