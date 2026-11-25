@@ -22,3 +22,18 @@ test('near terrain expands visible lower bound without including rear directions
 import {visibleSurface,surfaceDistance} from '../public/core.mjs';
 test('flat terrain has continuous first-hit distance without artificial range boundaries',()=>{const s=visibleSurface([10,20,50,100,200].map(d=>({d,h:0})),2,2);assert.ok(Math.abs(surfaceDistance(s,-.1)-20)<.01);assert.ok(Math.abs(surfaceDistance(s,-.2)-10)<.01)});
 test('a farther slope behind a hill is hidden until it rises above the nearer skyline',()=>{const s=visibleSurface([{d:10,h:2},{d:20,h:12},{d:30,h:0},{d:100,h:40},{d:150,h:100}],2,2);assert.ok(surfaceDistance(s,.4)<=20);assert.ok(surfaceDistance(s,.55)>100);assert.equal(s.segments.length,3)});
+
+// Independent linear segment intersection, with no skyline preprocessing.
+function bruteIntersection(samples,eye,height,slope){
+ let prevD=0,prevDiff=-height;
+ for(const p of samples){
+  const diff=p.h-eye-p.d*p.d/(2*6371000)-slope*p.d;
+  if(diff>=0)return prevD+(p.d-prevD)*(-prevDiff)/(diff-prevDiff);
+  prevD=p.d;prevDiff=diff;
+ }
+ return null;
+}
+test('first hit matches direct segment search including rays above skyline',()=>{for(let j=0;j<24;j++){const samples=Array.from({length:150},(_,i)=>({d:5*(i+1),h:100+Math.sin(i*.11+j)*28+Math.cos(i*.037+j*.5)*38}));const eye=102+Math.cos(j*.5)*38+Math.sin(j)*28;const s=visibleSurface(samples,eye,2);for(let i=-100;i<=100;i++){const slope=i/50,d=surfaceDistance(s,slope),ref=bruteIntersection(samples,eye,2,slope);if(ref==null)assert.equal(d,null);else assert.ok(d!=null&&Math.abs(d-ref)<1e-6);}}});
+// Swiss Ephemeris Moshier, topocentric geometric altitude, height 374.04m, JST.
+const solarFixtures=[["2026-11-22",420,119.38136342,5.43882862],["2026-11-22",720,188.55296768,34.01272638],["2026-11-22",930,235.81800567,10.52013887],["2026-06-21",420,79.93503975,27.98809596],["2026-06-21",720,195.65092206,77.61678547],["2026-06-21",930,272.07979179,40.3489353],["2026-03-20",420,100.36562052,13.735153],["2026-03-20",720,183.71004269,54.33126854],["2026-03-20",930,247.55434323,28.02350202]];
+test('solar direction compared with independent ephemeris',()=>{for(const [date,m,az,alt] of solarFixtures){const s=sunPosition(date,m,35.416459,139.048985);assert.ok(Math.abs((s.az-az+540)%360-180)<.02);assert.ok(Math.abs(s.geo-alt)<.02)}});

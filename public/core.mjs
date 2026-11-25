@@ -121,10 +121,10 @@ export function visibleSurface(samples,eye,eyeHeight){
  return {segments,angle:segments.length?Math.atan(max)*180/Math.PI:null};
 }
 export function surfaceDistance(surface,slope){
- const a=surface.segments;if(!a.length)return null;
+ const a=surface.segments;if(!a.length||slope>a[a.length-1].hi)return null;
  let lo=0,hi=a.length-1;
  while(lo<hi){const mid=(lo+hi)>>1;if(a[mid].hi>=slope)hi=mid;else lo=mid+1}
  const p=a[lo];
- if(slope>p.hi||Math.abs(slope-p.m)<1e-12||p.b===0)return p.d;
+ if(Math.abs(slope-p.m)<1e-12||p.b===0)return p.d;
  return Math.max(p.near,Math.min(p.d,p.b/(slope-p.m)));
 }
