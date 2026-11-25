@@ -1,8 +1,8 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay,panoramaSlices} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay,panoramaSlices,zoomWindow,zoomAnchor} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 const todayJST=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
 let config={lat:35.416459,lon:139.048985,height:1.6,date:todayJST},profile=null,coverage=0,day=[],timer=null,frame=null,terrainStatus='';
-let viewOffset=0,panFrame=0;
+let viewOffset=0,panFrame=0,viewY=null,viewGeometry=null;
 let terrainData=null,busy=false,pending=null,changeTimer=null,settleTimer=null,desired=null;
 const pointKey=c=>[c.lat,c.lon].join('/');
 $('date').value=todayJST;
@@ -191,12 +191,14 @@ function events(){
  if(!box.children.length)box.textContent='取得済み地形で判定できる変化なし（欠損・短時間の変化は未検出の場合があります）。';
 }
 function render(preview=false){
- const f=frame||daylightFrame(day),span=f.span,center=wrap(f.center+viewOffset),left=center-span/2,right=center+span/2;
- let top=f.top,bottom=f.bottom;
- if(profile){const bounds=profile.panBounds||(profile.panBounds=terrainBounds({center:180,span:360},[profile.total],step));top=Math.max(top,panoramaY(bounds.high));bottom=Math.min(bottom,panoramaY(bounds.low));}
- const plotW=1800,scale=plotW/span,plotH=Math.round((top-bottom)*scale),width=plotW+78,H=plotH+64;
+ const f=frame||daylightFrame(day),baseSpan=f.span,center=wrap(f.center+viewOffset),zoom=+$('zoom').value/100,span=baseSpan/zoom,left=center-span/2,right=center+span/2;
+ let baseTop=f.top,baseBottom=f.bottom;
+ if(profile){const bounds=profile.panBounds||(profile.panBounds=terrainBounds({center:180,span:360},[profile.total],step));baseTop=Math.max(baseTop,panoramaY(bounds.high));baseBottom=Math.min(baseBottom,panoramaY(bounds.low));}
+ const {top,bottom,mid}=zoomWindow(baseTop,baseBottom,zoom,viewY);
+ const plotW=1800,baseScale=plotW/baseSpan,scale=baseScale*zoom,plotH=Math.round((baseTop-baseBottom)*baseScale),width=plotW+78,H=plotH+64;
+ viewGeometry={center,span,top,bottom,mid,zoom,plotW,plotH,baseTop,baseBottom,scale};
  if(canvas.width!==width)canvas.width=width;if(canvas.height!==H)canvas.height=H;
- const zoom=+$('zoom').value;canvas.style.width=zoom+'%';$('zoomValue').textContent=zoom+'%';
+ canvas.style.width='100%';$('zoomValue').textContent=zoom.toFixed(2).replace(/0+$/,'').replace(/\.$/,'')+'×';
  const cx=48+plotW/2,cy=22+plotH/2;
  const project=(a,h)=>[cx+angleDelta(a,center)*scale,22+(top-panoramaY(h))*scale];
  $('frameInfo').textContent='水平範囲 '+Math.round(wrap(left))%360+'° → '+Math.round(wrap(right))%360+'°（約 '+Math.round(span)+'°）｜中心 '+Math.round(center)%360+'°';
@@ -225,8 +227,9 @@ function render(preview=false){
  }
  if($('grid').checked){
   ctx.strokeStyle='#ffffff25';ctx.lineWidth=1;ctx.beginPath();
-  for(let a=Math.ceil(left/15)*15;a<=right;a+=15)trace([project(a,panoramaAltitude(bottom)),project(a,panoramaAltitude(top))]);
-  for(let h=Math.ceil(panoramaAltitude(bottom)/10)*10;h<=80;h+=10){ctx.moveTo(...project(left,h));ctx.lineTo(...project(right,h));}
+  const azStep=span>100?15:span>40?10:span>15?5:2,altStep=span>100?10:span>40?5:span>15?2:1;
+  for(let a=Math.ceil(left/azStep)*azStep;a<=right;a+=azStep){ctx.moveTo(...project(a,panoramaAltitude(bottom)));ctx.lineTo(...project(a,panoramaAltitude(top)));}
+  for(let h=Math.ceil(panoramaAltitude(bottom)/altStep)*altStep;h<=panoramaAltitude(top);h+=altStep){ctx.moveTo(...project(left,h));ctx.lineTo(...project(right,h));}
   ctx.stroke();
  }
  function polygon(p){
@@ -244,14 +247,14 @@ function render(preview=false){
   const shaded=$('layers').checked;
   // Cache a complete cyclic terrain texture; panning only crops it, never refetches DEM.
   const quality=preview===true?.5:1;
-  const rasterW=Math.max(1,Math.min(8192,Math.ceil(plotW*360/span*quality)));
+  const rasterW=Math.max(1,Math.min(8192,Math.ceil(plotW*360/baseSpan*quality)));
   const rasterH=Math.max(1,Math.min(Math.ceil(plotH*quality),Math.floor(6000000/rasterW)));
   const sy=plotH/rasterH;
-  const key=[plotW,plotH,span,top,bottom,shaded,rasterW,rasterH].join('/');
+  const key=[plotW,plotH,baseSpan,baseTop,baseBottom,shaded,rasterW,rasterH].join('/');
   if(profile.terrainCache?.key!==key){
    const terrain=document.createElement('canvas');terrain.width=rasterW;terrain.height=rasterH;
    const tc=terrain.getContext('2d'),img=tc.createImageData(rasterW,rasterH),pixels=img.data;
-   const slopes=Float64Array.from({length:rasterH},(_,y)=>Math.tan(panoramaAltitude(top-(y+.5)*sy/scale)*DEG));
+   const slopes=Float64Array.from({length:rasterH},(_,y)=>Math.tan(panoramaAltitude(baseTop-(y+.5)*sy/baseScale)*DEG));
    const color=d=>{
     // Continuous atmospheric distance cue; not a physical illumination model.
     const t=clamp(Math.log1p(d/30)/Math.log1p(70000/30),0,1);
@@ -260,7 +263,7 @@ function render(preview=false){
    for(let x=0;x<rasterW;x++){
     const az=(x+.5)*360/rasterW,f=az/step,i=Math.floor(f)%N,j=(i+1)%N,w=f-Math.floor(f);
     const h=horizon(az);if(h==null)continue;
-    const edge=(top-panoramaY(h))*scale/sy,y0=clamp(Math.floor(edge),0,rasterH);
+    const edge=(baseTop-panoramaY(h))*baseScale/sy,y0=clamp(Math.floor(edge),0,rasterH);
     for(let y=y0;y<rasterH;y++){
      const cover=clamp(y+1-edge,0,1);
      if(cover<=0)continue;
@@ -277,10 +280,11 @@ function render(preview=false){
    tc.putImageData(img,0,0);profile.terrainCache={key,terrain};
   }
   const texture=profile.terrainCache.terrain;
+  const sourceY=(baseTop-top)/(baseTop-baseBottom)*texture.height,sourceH=(top-bottom)/(baseTop-baseBottom)*texture.height;
   let dx=48;
   for(const piece of panoramaSlices(left,span,texture.width)){
    const dw=plotW*piece.fraction;
-   ctx.drawImage(texture,piece.x,0,piece.width,texture.height,dx,22,dw,plotH);dx+=dw;
+   ctx.drawImage(texture,piece.x,sourceY,piece.width,sourceH,dx,22,dw,plotH);dx+=dw;
   }
  }
  if($('path').checked){
@@ -301,9 +305,9 @@ function render(preview=false){
 let map=null,marker=null,viewLines=null;
 function updateMapDirection(){
  if(!map||!marker||!viewLines)return;
- const p=marker.getLatLng(),o=frame||daylightFrame(day),center=wrap(o.center+viewOffset);
+ const p=marker.getLatLng(),o=frame||daylightFrame(day),center=wrap(o.center+viewOffset),span=o.span/(+$('zoom').value/100);
  viewLines.clearLayers();
- for(const [a,style] of [[center,{weight:2,dashArray:'5 5'}],[center-o.span/2,{weight:1}],[center+o.span/2,{weight:1}]]){
+ for(const [a,style] of [[center,{weight:2,dashArray:'5 5'}],[center-span/2,{weight:1}],[center+span/2,{weight:1}]]){
   const q=destination(p.lat,p.lng,a,5000);
   L.polyline([p,q],{color:'#de8700',...style,interactive:false}).addTo(viewLines);
  }
@@ -352,36 +356,59 @@ $('height').addEventListener('input',()=>{syncHeight();scheduleUpdate(90,true)})
 $('heightRange').addEventListener('input',()=>{$('height').value=$('heightRange').value;scheduleUpdate(90,true)});
 for(const id of ['height','heightRange'])$(id).addEventListener('change',()=>scheduleUpdate(0));
 $('date').addEventListener('change',()=>scheduleUpdate(0));
-for(const id of ['time','zoom','grid','path','layers','light'])$(id).addEventListener('input',render);
+for(const id of ['time','grid','path','layers','light'])$(id).addEventListener('input',render);
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});
 $('save').addEventListener('click',()=>{canvas.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RidgeArc-'+config.date+'-'+clock(+$('time').value).replace(':','')+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)})});
 recomputeDay();render();
-function panTo(offset){
- viewOffset=((offset+180)%360+360)%360-180;
- if(!panFrame)panFrame=requestAnimationFrame(()=>{panFrame=0;render()});
+function requestView(){if(!panFrame)panFrame=requestAnimationFrame(()=>{panFrame=0;render()});}
+function panTo(offset){viewOffset=angleDelta(offset,0);requestView();}
+function changeZoom(value,anchor=null){
+ const next=clamp(Math.round(value/25)*25,100,800),z=next/100,g=viewGeometry;
+ if(g&&z!==g.zoom){
+  if(z===1)viewY=null;
+  else if(anchor){
+   const p=zoomAnchor(g.center,g.mid,g.span,g.top-g.bottom,z,g.zoom,anchor.u,anchor.v);
+   viewOffset=angleDelta(p.center,(frame||daylightFrame(day)).center);viewY=p.mid;
+  }else if(g.zoom===1){
+   const h=horizon(g.center);viewY=h==null?g.mid:panoramaY(h);
+  }
+ }
+ $('zoom').value=next;requestView();
 }
+$('zoom').addEventListener('input',()=>changeZoom(+$('zoom').value));
+$('zoomIn').addEventListener('click',()=>changeZoom(+$('zoom').value+50));
+$('zoomOut').addEventListener('click',()=>changeZoom(+$('zoom').value-50));
 $('panRange').addEventListener('input',()=>panTo(+$('panRange').value));
-$('panLeft').addEventListener('click',()=>panTo(viewOffset-30));
-$('panRight').addEventListener('click',()=>panTo(viewOffset+30));
-$('resetZoom').addEventListener('click',()=>{viewOffset=0;$('zoom').value=100;render();canvas.parentElement.scrollLeft=0});
-$('resetBearing').addEventListener('click',()=>panTo(0));
+$('panLeft').addEventListener('click',()=>panTo(viewOffset-(viewGeometry?.span??120)/4));
+$('panRight').addEventListener('click',()=>panTo(viewOffset+(viewGeometry?.span??120)/4));
+function resetView(){viewOffset=0;viewY=null;$('zoom').value=100;requestView();}
+$('resetZoom').addEventListener('click',resetView);
+$('resetBearing').addEventListener('click',resetView);
 let drag=null;
 canvas.addEventListener('pointerdown',e=>{
- if(e.button!==0)return;
- drag={id:e.pointerId,x:e.clientX,offset:viewOffset,span:(frame||daylightFrame(day)).span,width:canvas.getBoundingClientRect().width};
+ if(e.button!==0||!viewGeometry)return;
+ const rect=canvas.getBoundingClientRect(),g=viewGeometry;
+ drag={id:e.pointerId,x:e.clientX,y:e.clientY,offset:viewOffset,mid:g.mid,span:g.span,vertical:g.top-g.bottom,zoom:g.zoom,width:rect.width*g.plotW/canvas.width,height:rect.height*g.plotH/canvas.height};
  canvas.setPointerCapture(e.pointerId);canvas.classList.add('dragging');
 });
 canvas.addEventListener('pointermove',e=>{
  if(!drag||drag.id!==e.pointerId)return;
- panTo(drag.offset-(e.clientX-drag.x)*drag.span/Math.max(1,drag.width)*1878/1800);
+ if(drag.zoom>1)viewY=drag.mid+(e.clientY-drag.y)*drag.vertical/Math.max(1,drag.height);
+ panTo(drag.offset-(e.clientX-drag.x)*drag.span/Math.max(1,drag.width));
 });
-function endPan(e){if(drag?.id===e.pointerId){drag=null;canvas.classList.remove('dragging')}}
+function endPan(e){if(drag?.id===e.pointerId){drag=null;canvas.classList.remove('dragging');if(viewGeometry&&viewGeometry.zoom>1)viewY=viewGeometry.mid}}
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,endPan);
 canvas.addEventListener('wheel',e=>{
- if(!e.shiftKey&&Math.abs(e.deltaX)<=Math.abs(e.deltaY))return;
+ if(!viewGeometry)return;
  e.preventDefault();
- const delta=e.shiftKey&&Math.abs(e.deltaY)>Math.abs(e.deltaX)?e.deltaY:e.deltaX;
- const units=e.deltaMode===1?16:e.deltaMode===2?canvas.clientWidth:1;
- panTo(viewOffset+delta*units*(frame||daylightFrame(day)).span/Math.max(1,canvas.clientWidth));
+ const g=viewGeometry,rect=canvas.getBoundingClientRect(),units=e.deltaMode===1?16:e.deltaMode===2?rect.width:1;
+ if(e.shiftKey||(!e.ctrlKey&&Math.abs(e.deltaX)>Math.abs(e.deltaY))){
+  const delta=e.shiftKey&&Math.abs(e.deltaY)>Math.abs(e.deltaX)?e.deltaY:e.deltaX;
+  panTo(viewOffset+delta*units*g.span/Math.max(1,rect.width));return;
+ }
+ if(!e.deltaY)return;
+ const u=clamp(((e.clientX-rect.left)*canvas.width/rect.width-48)/g.plotW,0,1),v=clamp(((e.clientY-rect.top)*canvas.height/rect.height-22)/g.plotH,0,1);
+ const current=+$('zoom').value,amount=Math.max(25,Math.round(current*.15/25)*25);
+ changeZoom(current+(e.deltaY<0?amount:-amount),{u,v});
 },{passive:false});
 initMap();syncHeight();scheduleUpdate(0);

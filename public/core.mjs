@@ -191,3 +191,13 @@ export function panoramaSlices(left,span,width){
  if(length-first>1e-8)out.push({x:0,width:length-first,fraction:(length-first)/length});
  return out;
 }
+
+// Crop both angular axes with equal magnification, inside the full panorama.
+export function zoomWindow(top,bottom,zoom,focus){
+ const half=(top-bottom)/(2*zoom),mid=Math.max(bottom+half,Math.min(top-half,focus??(top+bottom)/2));
+ return {top:mid+half,bottom:mid-half,mid};
+}
+export function zoomAnchor(center,mid,span,verticalSpan,newZoom,oldZoom,u,v){
+ const ratio=oldZoom/newZoom;
+ return {center:center+(u-.5)*span*(1-ratio),mid:mid+(.5-v)*verticalSpan*(1-ratio)};
+}

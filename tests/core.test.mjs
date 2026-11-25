@@ -47,3 +47,7 @@ test('compact retained ray matches original visible surface for multiple eye hei
 
 import {panoramaSlices} from '../public/core.mjs';
 test('cyclic panorama crops continuously across north',()=>{assert.deepEqual(panoramaSlices(300,120,3600),[{x:3000,width:600,fraction:.5},{x:0,width:600,fraction:.5}]);for(const [a,s] of [[100,140],[-45,150],[360,180],[0,360]]){const p=panoramaSlices(a,s,3600);assert.ok(Math.abs(p.reduce((n,x)=>n+x.fraction,0)-1)<1e-10);assert.ok(p.every(x=>x.x>=0&&x.x+x.width<=3600+1e-8));}});
+
+import {zoomWindow,zoomAnchor} from '../public/core.mjs';
+test('zoom preserves aspect and stays within vertical panorama',()=>{for(const z of [1,2,4,8]){const w=zoomWindow(45,-20,z,3);assert.ok(Math.abs(w.top-w.bottom-65/z)<1e-9);assert.ok(w.top<=45&&w.bottom>=-20)}});
+test('zoom anchor retains selected angular point',()=>{const a=zoomAnchor(250,10,120,60,4,2,.8,.2);assert.ok(Math.abs(a.center+.3*60-(250+.3*120))<1e-9);assert.ok(Math.abs(a.mid+.3*30-(10+.3*60))<1e-9)});
