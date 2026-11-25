@@ -68,3 +68,14 @@ export function diskBoundary(s,n=36){
   return [wrap(Math.atan2(v[0],v[1])/DEG),Math.asin(clamp(v[2],-1,1))/DEG];
  });
 }
+
+// Conformal cylindrical projection: locally equal horizontal and vertical angular scale.
+export function panoramaY(alt){return Math.asinh(Math.tan(clamp(alt,-89.8,89.8)*DEG))/DEG}
+export function panoramaAltitude(y){return Math.atan(Math.sinh(y*DEG))/DEG}
+export function daylightFrame(day,margin=12){
+ const active=day.filter(p=>p.alt>=-2);
+ if(!active.length)return {center:180,span:180,top:panoramaY(35),bottom:panoramaY(-18)};
+ let a=active[0].az,low=a,high=a,peak=-2;
+ for(const p of active){a+=angleDelta(p.az,a);low=Math.min(low,a);high=Math.max(high,a);peak=Math.max(peak,p.alt+p.radius)}
+ return {center:wrap((low+high)/2),span:clamp(high-low+2*margin,40,350),top:Math.min(panoramaY(89.8),Math.max(panoramaY(20),panoramaY(peak)+7)),bottom:panoramaY(-18)};
+}

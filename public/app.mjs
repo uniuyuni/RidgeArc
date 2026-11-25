@@ -1,6 +1,6 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,cameraProject,diskBoundary} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
-let config={lat:35.416459,lon:139.048985,height:1.6,date:'2026-11-22'},profile=null,coverage=0,day=[],timer=null;
+let config={lat:35.416459,lon:139.048985,height:1.6,date:'2026-11-22'},profile=null,coverage=0,day=[],timer=null,frame=null;
 const bands=[{start:30,end:2000,inc:25,z:14},{start:2050,end:8000,inc:65,z:13},{start:8150,end:70000,inc:220,z:10}];
 const tiles=new Map();
 function getTile(key){
@@ -15,7 +15,7 @@ function getTile(key){
  })().catch(()=>null);
  tiles.set(key,task);return task;
 }
-function recomputeDay(){day=Array.from({length:1440},(_,m)=>sunPosition(config.date,m,config.lat,config.lon))}
+function recomputeDay(){day=Array.from({length:1440},(_,m)=>sunPosition(config.date,m,config.lat,config.lon));frame=daylightFrame(day)}
 function lookup(p,loaded){const a=loaded.get(p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
 async function compute(){
  $('load').disabled=true;profile=null;coverage=0;tiles.clear();recomputeDay();render();events();
@@ -73,18 +73,16 @@ function events(){
  }
  if(!box.children.length)box.textContent='判定できる変化なし（または欠損）。';
 }
-function numeric(id,fallback,min,max){
- const el=$(id),v=el.value.trim()===''?fallback:Number(el.value);
- return clamp(Number.isFinite(v)?v:fallback,min,max);
-}
-function cameraOptions(){return {bearing:wrap(numeric('bearing',240,0,360)),pitch:numeric('pitch',3,-45,60),fov:numeric('fov',65,15,110),aspect:Number($('aspect').value)}}
 function render(){
- const camera=$('projection').value==='camera',o=cameraOptions(),center=o.bearing;
- const span=360,left=center-180,right=center+180,top=85,bottom=-30;
- const width=camera?1200:1800,plotW=width-78,scale=plotW/span,plotH=camera?Math.round(plotW/o.aspect):Math.round((top-bottom)*scale),H=plotH+64;
- canvas.width=width;canvas.height=H;canvas.classList.toggle('wide',!camera);
- const cx=48+plotW/2,cy=22+plotH/2,focal=plotW/(2*Math.tan(o.fov*DEG/2));
- const project=(a,h)=>camera?cameraProject(a,h,center,o.pitch,focal,cx,cy):[cx+angleDelta(a,center)*scale,22+(top-h)*scale];
+ const {center,span,bottom}=frame||daylightFrame(day),left=center-span/2,right=center+span/2;
+ let top=(frame||daylightFrame(day)).top;
+ if(profile){for(let a=left;a<=right;a+=step){const h=horizon(a);if(h!=null)top=Math.max(top,Math.min(panoramaY(89.8),panoramaY(h)+5));}}
+ const plotW=1800,scale=plotW/span,plotH=Math.round((top-bottom)*scale),width=plotW+78,H=plotH+64;
+ if(canvas.width!==width)canvas.width=width;if(canvas.height!==H)canvas.height=H;
+ const zoom=+$('zoom').value;canvas.style.width=zoom+'%';$('zoomValue').textContent=zoom+'%';
+ const cx=48+plotW/2,cy=22+plotH/2;
+ const project=(a,h)=>[cx+angleDelta(a,center)*scale,22+(top-panoramaY(h))*scale];
+ $('frameInfo').textContent='水平範囲 '+Math.round(wrap(left))+'° → '+Math.round(wrap(right))+'°（約 '+Math.round(span)+'°）｜山の形を局所的に保つ円筒投影';
  const m=+$('time').value,s=day[m]||sunPosition(config.date,m,config.lat,config.lon);
  $('clock').textContent=clock(m);$('az').textContent=s.az.toFixed(2)+'°';$('alt').textContent=s.alt.toFixed(2)+'°';
  const vis=profile&&coverage>=.5?diskVisibility(s,horizon):null;
@@ -107,8 +105,8 @@ function render(){
  }
  if($('grid').checked){
   ctx.strokeStyle='#ffffff25';ctx.lineWidth=1;ctx.beginPath();
-  for(let a=0;a<360;a+=camera?10:30)trace(Array.from({length:121},(_,i)=>project(a,i-35)));
-  for(let h=-30;h<=80;h+=10)trace(Array.from({length:361},(_,i)=>project(left+i,h)));
+  for(let a=Math.ceil(left/15)*15;a<=right;a+=15)trace([project(a,panoramaAltitude(bottom)),project(a,panoramaAltitude(top))]);
+  for(let h=-10;h<=80;h+=10)trace([project(left,h),project(right,h)]);
   ctx.stroke();
  }
  function polygon(p){
@@ -117,33 +115,26 @@ function render(){
   if(v.every(q=>q[0]<48)||v.every(q=>q[0]>48+plotW)||v.every(q=>q[1]<22)||v.every(q=>q[1]>22+plotH))return;
   ctx.moveTo(...v[0]);for(const q of v.slice(1))ctx.lineTo(...q);ctx.closePath();
  }
- if($('path').checked){ctx.beginPath();for(const p of day)if(p.alt>=-1)polygon(p);ctx.fillStyle='#ffdb9270';ctx.fill();}
  if(s.alt>=-2){ctx.beginPath();polygon(s);ctx.fillStyle='#fff2ad';ctx.fill();}
- // Render terrain per screen column using inverse camera rays. This is an
- // angular skyline mask, not a full 3D terrain mesh. Binary search finds the
- // boundary for tilted cameras, including the correct perspective distortion.
- function rayAt(px,py){
-  if(!camera)return [wrap(left+(px-48)/scale),top-(py-22)/scale];
-  const u=(px-cx)/focal,v=(cy-py)/focal,p=o.pitch*DEG;
-  const forward=Math.cos(p)-v*Math.sin(p),z=Math.sin(p)+v*Math.cos(p);
-  return [wrap(center+Math.atan2(u,forward)/DEG),Math.atan2(z,Math.hypot(u,forward))/DEG];
- }
+ // Cylindrical panorama: each screen column corresponds to one azimuth.
+ function rayAt(px,py){return [wrap(left+(px-48)/scale),panoramaAltitude(top-(py-22)/scale)];}
  function land(values,color){
   let run=[];
   function flush(){if(run.length<2){run=[];return;}ctx.beginPath();ctx.moveTo(run[0][0],22+plotH);for(const q of run)ctx.lineTo(...q);ctx.lineTo(run.at(-1)[0],22+plotH);ctx.closePath();ctx.fillStyle=color;ctx.fill();run=[];}
-  for(let px=48;px<=48+plotW;px+=2){
-   const diff=py=>{const [a,h]=rayAt(px,py),ridge=horizonAt(values,a,step);return ridge==null?null:h-ridge};
-   let lo=22,hi=22+plotH,dlo=diff(lo),dhi=diff(hi);
-   if(dlo==null||dhi==null){flush();continue}
-   if(dhi>0){flush();continue}
-   if(dlo<=0){run.push([px,lo]);continue}
-   let missing=false;for(let i=0;i<12;i++){const mid=(lo+hi)/2,d=diff(mid);if(d==null){missing=true;break}if(d>0)lo=mid;else hi=mid}
-   if(missing)flush();else run.push([px,(lo+hi)/2]);
+  const columns=Math.ceil(span/step);
+  for(let i=0;i<=columns;i++){
+   const a=left+span*i/columns,h=horizonAt(values,a,step);
+   if(h==null){flush();continue}
+   const px=48+plotW*i/columns,py=clamp(22+(top-panoramaY(h))*scale,22,22+plotH);
+   run.push([px,py]);
   }flush();
  }
  if(profile){const colors=['#233747','#3f5869','#788b9b'];if($('layers').checked){for(let k=2;k>=0;k--)land(profile.out[k],colors[k])}else land(profile.total,colors[0]);}
  if($('path').checked){
-  ctx.strokeStyle='#ffe5a8b0';ctx.lineWidth=1;ctx.setLineDash([4,5]);ctx.beginPath();trace(day.map(p=>p.alt>=-1?project(p.az,p.alt):null));ctx.stroke();ctx.setLineDash([]);
+  // Show the complete swept disk even when it lies behind a ridge; the solid
+  // current disk was drawn before terrain and is correctly hidden by it.
+  ctx.beginPath();for(const p of day)if(p.alt>=-2)polygon(p);ctx.fillStyle='#ffdb9248';ctx.fill();
+  ctx.strokeStyle='#ffe5a8b0';ctx.lineWidth=1;ctx.setLineDash([4,5]);ctx.beginPath();trace(day.map(p=>p.alt>=-2?project(p.az,p.alt):null));ctx.stroke();ctx.setLineDash([]);
   ctx.font='12px system-ui';ctx.fillStyle='#fff4d8';ctx.textAlign='center';
   for(let i=0;i<1440;i+=60){const p=day[i],q=p&&p.alt>=0?project(p.az,p.alt):null;if(q&&q[0]>68&&q[0]<48+plotW-20&&q[1]>42&&q[1]<22+plotH)ctx.fillText(clock(i),q[0],q[1]-8);}
  }
@@ -151,16 +142,15 @@ function render(){
  ctx.restore();ctx.font='12px system-ui';ctx.fillStyle='#c7d5df';ctx.textAlign='center';
  for(let px=48;px<=48+plotW;px+=plotW/6){const [a]=rayAt(px,cy);ctx.fillText(Math.round(a)%360+'°',px,22+plotH+18)}
  ctx.textAlign='right';for(let py=22;py<=22+plotH;py+=plotH/5){const [,h]=rayAt(cx,py);ctx.fillText(Math.round(h)+'°',43,py+4)}
- ctx.textAlign='left';ctx.fillText('RidgeArc · '+config.date+' '+clock(m)+' JST · '+(camera?'透視投影 '+o.fov+'°':'360°パノラマ')+' · 出典：国土地理院標高タイルを加工',48,H-10);
+ ctx.textAlign='left';ctx.fillText('RidgeArc · '+config.date+' '+clock(m)+' JST · '+'自然パノラマ '+Math.round(span)+'°'+' · 出典：国土地理院標高タイルを加工',48,H-10);
  updateMapDirection();
 }
 let map=null,marker=null,viewLines=null;
 function updateMapDirection(){
  if(!map||!marker||!viewLines)return;
- const p=marker.getLatLng(),o=cameraOptions();
+ const p=marker.getLatLng(),o=frame||daylightFrame(day);
  viewLines.clearLayers();
- if($('projection').value!=='camera')return;
- for(const [a,style] of [[o.bearing,{weight:2,dashArray:'5 5'}],[o.bearing-o.fov/2,{weight:1}],[o.bearing+o.fov/2,{weight:1}]]){
+ for(const [a,style] of [[o.center,{weight:2,dashArray:'5 5'}],[o.center-o.span/2,{weight:1}],[o.center+o.span/2,{weight:1}]]){
   const q=destination(p.lat,p.lng,a,5000);
   L.polyline([p,q],{color:'#de8700',...style,interactive:false}).addTo(viewLines);
  }
@@ -205,9 +195,9 @@ $('location').addEventListener('submit',async e=>{
  if(!Number.isFinite(Date.parse(config.date+'T00:00:00+09:00')))return;
  try{await compute()}catch(err){profile=null;$('status').textContent='計算失敗：'+err.message;render();events()}finally{$('load').disabled=false}
 });
-for(const id of ['time','projection','bearing','pitch','fov','aspect','grid','path','layers','light'])$(id).addEventListener('input',render);
+for(const id of ['time','zoom','grid','path','layers','light'])$(id).addEventListener('input',render);
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});
 $('save').addEventListener('click',()=>{canvas.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RidgeArc-'+config.date+'-'+clock(+$('time').value).replace(':','')+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)})});
 recomputeDay();render();
-$('faceSun').addEventListener('click',()=>{const s=day[+$('time').value];if(s){$('bearing').value=Math.round(s.az)%360;$('pitch').value=Math.round(clamp(s.alt,-45,60));render()}});
+$('resetZoom').addEventListener('click',()=>{$('zoom').value=100;render();canvas.parentElement.scrollLeft=0});
 initMap();

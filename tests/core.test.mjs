@@ -10,3 +10,7 @@ test('destination, pixel and curvature',()=>{const [a,b]=destination(35,139,0,10
 import {cameraProject,diskBoundary} from '../public/core.mjs';
 test('camera center and horizontal field of view',()=>{const f=600/Math.tan(65*Math.PI/360);const p=cameraProject(240,3,240,3,f,600,400);assert.ok(Math.abs(p[0]-600)<1e-8&&Math.abs(p[1]-400)<1e-8);assert.equal(cameraProject(60,0,240,0,f,600,400),null);assert.ok(Math.abs(cameraProject(272.5,0,240,0,f,600,400)[0]-1200)<1e-8)});
 test('solar circle angular radius at zenith-safe location',()=>{const pts=diskBoundary({az:240,alt:10,radius:.266},36);assert.equal(pts.length,36);assert.ok(Math.abs(pts[9][1]-10.266)<1e-7)});
+
+import {panoramaY,panoramaAltitude,daylightFrame} from '../public/core.mjs';
+test('natural panorama is invertible and locally conformal',()=>{for(const h of [-18,0,15,60,80])assert.ok(Math.abs(panoramaAltitude(panoramaY(h))-h)<1e-9);assert.ok(Math.abs((panoramaY(.001)-panoramaY(-.001))/.002-1)<1e-8)});
+test('auto sunrise to sunset frame and north crossing',()=>{const f=daylightFrame([{az:110,alt:0,radius:.26},{az:180,alt:35,radius:.26},{az:250,alt:0,radius:.26}]);assert.equal(f.center,180);assert.equal(f.span,164);const n=daylightFrame([{az:60,alt:0,radius:.26},{az:0,alt:75,radius:.26},{az:300,alt:0,radius:.26}]);assert.equal(n.center,0);assert.equal(n.span,144)});
