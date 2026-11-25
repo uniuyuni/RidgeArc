@@ -106,7 +106,7 @@ function render(){
  if($('grid').checked){
   ctx.strokeStyle='#ffffff25';ctx.lineWidth=1;ctx.beginPath();
   for(let a=Math.ceil(left/15)*15;a<=right;a+=15)trace([project(a,panoramaAltitude(bottom)),project(a,panoramaAltitude(top))]);
-  for(let h=-10;h<=80;h+=10)trace([project(left,h),project(right,h)]);
+  for(let h=-10;h<=80;h+=10){ctx.moveTo(...project(left,h));ctx.lineTo(...project(right,h));}
   ctx.stroke();
  }
  function polygon(p){
