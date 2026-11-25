@@ -47,3 +47,24 @@ export function diskVisibility(s,horizon){
  }
  return visible/total;
 }
+
+// Camera basis: forward at bearing/pitch, right in local horizontal plane,
+// up perpendicular to both. Rectilinear projection (ideal pinhole).
+export function cameraProject(az,alt,bearing,pitch,focal,cx,cy){
+ const a=angleDelta(az,bearing)*DEG,e=alt*DEG,p=pitch*DEG;
+ const forward=Math.cos(e)*Math.cos(a)*Math.cos(p)+Math.sin(e)*Math.sin(p);
+ if(forward<=1e-6)return null;
+ const right=Math.cos(e)*Math.sin(a),up=Math.sin(e)*Math.cos(p)-Math.cos(e)*Math.cos(a)*Math.sin(p);
+ return [cx+focal*right/forward,cy-focal*up/forward];
+}
+// Points of a true angular circle on the unit sphere.
+export function diskBoundary(s,n=36){
+ const a=s.az*DEG,e=s.alt*DEG,r=s.radius*DEG;
+ const center=[Math.cos(e)*Math.sin(a),Math.cos(e)*Math.cos(a),Math.sin(e)];
+ const right=[Math.cos(a),-Math.sin(a),0],up=[-Math.sin(e)*Math.sin(a),-Math.sin(e)*Math.cos(a),Math.cos(e)];
+ return Array.from({length:n},(_,i)=>{
+  const t=i*2*Math.PI/n;
+  const v=center.map((c,j)=>c*Math.cos(r)+(right[j]*Math.cos(t)+up[j]*Math.sin(t))*Math.sin(r));
+  return [wrap(Math.atan2(v[0],v[1])/DEG),Math.asin(clamp(v[2],-1,1))/DEG];
+ });
+}

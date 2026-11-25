@@ -1,4 +1,4 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,cameraProject,diskBoundary} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 let config={lat:35.416459,lon:139.048985,height:1.6,date:'2026-11-22'},profile=null,coverage=0,day=[],timer=null;
 const bands=[{start:30,end:2000,inc:25,z:14},{start:2050,end:8000,inc:65,z:13},{start:8150,end:70000,inc:220,z:10}];
@@ -73,11 +73,18 @@ function events(){
  }
  if(!box.children.length)box.textContent='判定できる変化なし（または欠損）。';
 }
+function numeric(id,fallback,min,max){
+ const el=$(id),v=el.value.trim()===''?fallback:Number(el.value);
+ return clamp(Number.isFinite(v)?v:fallback,min,max);
+}
+function cameraOptions(){return {bearing:wrap(numeric('bearing',240,0,360)),pitch:numeric('pitch',3,-45,60),fov:numeric('fov',65,15,110),aspect:Number($('aspect').value)}}
 function render(){
- const [center,span]=$('view').value.split(',').map(Number),left=center-span/2,right=center+span/2;
- const width=span===360?1800:1200,plotW=width-78,scale=plotW/span,top=span===60?32:84,bottom=span===60?-12:-10,plotH=Math.round((top-bottom)*scale),H=plotH+64;
- canvas.width=width;canvas.height=H;canvas.classList.toggle('wide',span===360);
- const x=a=>48+(a-left)*scale,y=a=>22+(top-a)*scale;
+ const camera=$('projection').value==='camera',o=cameraOptions(),center=o.bearing;
+ const span=360,left=center-180,right=center+180,top=85,bottom=-30;
+ const width=camera?1200:1800,plotW=width-78,scale=plotW/span,plotH=camera?Math.round(plotW/o.aspect):Math.round((top-bottom)*scale),H=plotH+64;
+ canvas.width=width;canvas.height=H;canvas.classList.toggle('wide',!camera);
+ const cx=48+plotW/2,cy=22+plotH/2,focal=plotW/(2*Math.tan(o.fov*DEG/2));
+ const project=(a,h)=>camera?cameraProject(a,h,center,o.pitch,focal,cx,cy):[cx+angleDelta(a,center)*scale,22+(top-h)*scale];
  const m=+$('time').value,s=day[m]||sunPosition(config.date,m,config.lat,config.lon);
  $('clock').textContent=clock(m);$('az').textContent=s.az.toFixed(2)+'°';$('alt').textContent=s.alt.toFixed(2)+'°';
  const vis=profile&&coverage>=.5?diskVisibility(s,horizon):null;
@@ -92,39 +99,115 @@ function render(){
   g.addColorStop(1,mix([25,30,52],warm>.3?[223,153,100]:[177,210,230],Math.max(daylight,warm*.8)));
  }else{g.addColorStop(0,'#162c40');g.addColorStop(1,'#38516a')}
  ctx.fillStyle=g;ctx.fillRect(48,22,plotW,plotH);
- const grid=span===60?5:15;
- ctx.strokeStyle='#ffffff20';ctx.lineWidth=1;ctx.beginPath();
- for(let a=Math.ceil(left/grid)*grid;a<=right;a+=grid){ctx.moveTo(x(a),22);ctx.lineTo(x(a),22+plotH)}
- for(let a=Math.ceil(bottom/grid)*grid;a<=top;a+=grid){ctx.moveTo(48,y(a));ctx.lineTo(48+plotW,y(a))}ctx.stroke();
- function drawDisk(p){const a=center+angleDelta(p.az,center);if(a<left-2||a>right+2||p.alt<bottom-2||p.alt>top+2)return;
-  ctx.moveTo(x(a)+p.radius*scale/Math.max(.05,Math.cos(p.alt*DEG)),y(p.alt));ctx.ellipse(x(a),y(p.alt),p.radius*scale/Math.max(.05,Math.cos(p.alt*DEG)),p.radius*scale,0,0,2*Math.PI);}
- if($('path').checked){ctx.beginPath();for(let i=0;i<1440;i++){const p=day[i];if(p&&p.alt>=-1)drawDisk(p)}ctx.fillStyle='#ffdb9270';ctx.fill();}
- ctx.beginPath();drawDisk(s);ctx.fillStyle='#fff2ad';ctx.fill();
- // Far-to-near compositing; each band has its own maximum elevation angle.
+ function trace(points){
+  let prev=null;
+  for(const p of points){if(!p||!Number.isFinite(p[0])||!Number.isFinite(p[1])){prev=null;continue}
+   if(!prev||Math.abs(p[0]-prev[0])>plotW*.6||Math.abs(p[1]-prev[1])>plotH*2)ctx.moveTo(...p);else ctx.lineTo(...p);prev=p;
+  }
+ }
+ if($('grid').checked){
+  ctx.strokeStyle='#ffffff25';ctx.lineWidth=1;ctx.beginPath();
+  for(let a=0;a<360;a+=camera?10:30)trace(Array.from({length:121},(_,i)=>project(a,i-35)));
+  for(let h=-30;h<=80;h+=10)trace(Array.from({length:361},(_,i)=>project(left+i,h)));
+  ctx.stroke();
+ }
+ function polygon(p){
+  const v=diskBoundary(p,24).map(([a,h])=>project(a,h));
+  if(v.some(q=>!q)||Math.max(...v.map(q=>q[0]))-Math.min(...v.map(q=>q[0]))>plotW/2)return;
+  if(v.every(q=>q[0]<48)||v.every(q=>q[0]>48+plotW)||v.every(q=>q[1]<22)||v.every(q=>q[1]>22+plotH))return;
+  ctx.moveTo(...v[0]);for(const q of v.slice(1))ctx.lineTo(...q);ctx.closePath();
+ }
+ if($('path').checked){ctx.beginPath();for(const p of day)if(p.alt>=-1)polygon(p);ctx.fillStyle='#ffdb9270';ctx.fill();}
+ if(s.alt>=-2){ctx.beginPath();polygon(s);ctx.fillStyle='#fff2ad';ctx.fill();}
+ // Render terrain per screen column using inverse camera rays. This is an
+ // angular skyline mask, not a full 3D terrain mesh. Binary search finds the
+ // boundary for tilted cameras, including the correct perspective distortion.
+ function rayAt(px,py){
+  if(!camera)return [wrap(left+(px-48)/scale),top-(py-22)/scale];
+  const u=(px-cx)/focal,v=(cy-py)/focal,p=o.pitch*DEG;
+  const forward=Math.cos(p)-v*Math.sin(p),z=Math.sin(p)+v*Math.cos(p);
+  return [wrap(center+Math.atan2(u,forward)/DEG),Math.atan2(z,Math.hypot(u,forward))/DEG];
+ }
  function land(values,color){
   let run=[];
-  function flush(){if(run.length<2){run=[];return;}ctx.beginPath();ctx.moveTo(x(run[0][0]),22+plotH);for(const [a,h] of run)ctx.lineTo(x(a),y(h));ctx.lineTo(x(run.at(-1)[0]),22+plotH);ctx.closePath();ctx.fillStyle=color;ctx.fill();run=[];}
-  for(let a=left;a<=right+1e-6;a+=step){const h=horizonAt(values,a,step);if(h==null)flush();else run.push([a,h]);}flush();
+  function flush(){if(run.length<2){run=[];return;}ctx.beginPath();ctx.moveTo(run[0][0],22+plotH);for(const q of run)ctx.lineTo(...q);ctx.lineTo(run.at(-1)[0],22+plotH);ctx.closePath();ctx.fillStyle=color;ctx.fill();run=[];}
+  for(let px=48;px<=48+plotW;px+=2){
+   const diff=py=>{const [a,h]=rayAt(px,py),ridge=horizonAt(values,a,step);return ridge==null?null:h-ridge};
+   let lo=22,hi=22+plotH,dlo=diff(lo),dhi=diff(hi);
+   if(dlo==null||dhi==null){flush();continue}
+   if(dhi>0){flush();continue}
+   if(dlo<=0){run.push([px,lo]);continue}
+   let missing=false;for(let i=0;i<12;i++){const mid=(lo+hi)/2,d=diff(mid);if(d==null){missing=true;break}if(d>0)lo=mid;else hi=mid}
+   if(missing)flush();else run.push([px,(lo+hi)/2]);
+  }flush();
  }
  if(profile){const colors=['#233747','#3f5869','#788b9b'];if($('layers').checked){for(let k=2;k>=0;k--)land(profile.out[k],colors[k])}else land(profile.total,colors[0]);}
  if($('path').checked){
-  ctx.strokeStyle='#ffe5a8b0';ctx.lineWidth=1;ctx.setLineDash([4,5]);ctx.beginPath();let prev=null;
-  for(let i=0;i<1440;i+=2){const p=day[i];if(!p||p.alt<-1){prev=null;continue}const a=center+angleDelta(p.az,center);if(a<left||a>right||p.alt>top){prev=null;continue}if(prev===null||Math.abs(a-prev)>10)ctx.moveTo(x(a),y(p.alt));else ctx.lineTo(x(a),y(p.alt));prev=a;}ctx.stroke();ctx.setLineDash([]);
+  ctx.strokeStyle='#ffe5a8b0';ctx.lineWidth=1;ctx.setLineDash([4,5]);ctx.beginPath();trace(day.map(p=>p.alt>=-1?project(p.az,p.alt):null));ctx.stroke();ctx.setLineDash([]);
   ctx.font='12px system-ui';ctx.fillStyle='#fff4d8';ctx.textAlign='center';
-  for(let i=0;i<1440;i+=60){const p=day[i];if(!p||p.alt<0)continue;const a=center+angleDelta(p.az,center);if(a>left+2&&a<right-2&&p.alt<top-2)ctx.fillText(clock(i),x(a),y(p.alt)-8);}
+  for(let i=0;i<1440;i+=60){const p=day[i],q=p&&p.alt>=0?project(p.az,p.alt):null;if(q&&q[0]>68&&q[0]<48+plotW-20&&q[1]>42&&q[1]<22+plotH)ctx.fillText(clock(i),q[0],q[1]-8);}
  }
  if(!profile){ctx.fillStyle='#e2edf5';ctx.font='16px system-ui';ctx.textAlign='center';ctx.fillText('地形未計算 — 「地形を計算」を押してください',width/2,22+plotH/2);}
  ctx.restore();ctx.font='12px system-ui';ctx.fillStyle='#c7d5df';ctx.textAlign='center';
- for(let a=Math.ceil(left/grid)*grid;a<=right;a+=grid)ctx.fillText(wrap(a)+'°',x(a),22+plotH+18);
- ctx.textAlign='right';for(let a=Math.ceil(bottom/grid)*grid;a<=top;a+=grid)ctx.fillText(a+'°',43,y(a)+4);
- ctx.textAlign='left';ctx.fillText('RidgeArc · '+config.date+' '+clock(m)+' JST · 方位角 / 仰角 · 出典：国土地理院標高タイルを加工',48,H-10);
+ for(let px=48;px<=48+plotW;px+=plotW/6){const [a]=rayAt(px,cy);ctx.fillText(Math.round(a)%360+'°',px,22+plotH+18)}
+ ctx.textAlign='right';for(let py=22;py<=22+plotH;py+=plotH/5){const [,h]=rayAt(cx,py);ctx.fillText(Math.round(h)+'°',43,py+4)}
+ ctx.textAlign='left';ctx.fillText('RidgeArc · '+config.date+' '+clock(m)+' JST · '+(camera?'透視投影 '+o.fov+'°':'360°パノラマ')+' · 出典：国土地理院標高タイルを加工',48,H-10);
+ updateMapDirection();
+}
+let map=null,marker=null,viewLines=null;
+function updateMapDirection(){
+ if(!map||!marker||!viewLines)return;
+ const p=marker.getLatLng(),o=cameraOptions();
+ viewLines.clearLayers();
+ if($('projection').value!=='camera')return;
+ for(const [a,style] of [[o.bearing,{weight:2,dashArray:'5 5'}],[o.bearing-o.fov/2,{weight:1}],[o.bearing+o.fov/2,{weight:1}]]){
+  const q=destination(p.lat,p.lng,a,5000);
+  L.polyline([p,q],{color:'#de8700',...style,interactive:false}).addTo(viewLines);
+ }
+}
+function selectPoint(lat,lon,pan=false){
+ if(lat<20||lat>46||lon<122||lon>154){$('mapstatus').textContent='現在は日本国内向けです。';return}
+ $('lat').value=lat.toFixed(6);$('lon').value=lon.toFixed(6);
+ if(marker){marker.setLatLng([lat,lon]);if(pan)map.setView([lat,lon],Math.max(map.getZoom(),13))}
+ $('mapstatus').textContent='選択地点 '+lat.toFixed(6)+', '+lon.toFixed(6)+' — 地形を計算してください。';
+ updateMapDirection();
+}
+function initMap(){
+ if(!window.L){$('mapstatus').textContent='地図の読み込みに失敗。緯度・経度の直接入力は可能です。';return}
+ map=L.map('map').setView([config.lat,config.lon],13);
+ const std=L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'}).addTo(map);
+ const photo=L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg',{maxZoom:18,attribution:'<a href="https://maps.gsi.go.jp/development/ichiran.html">国土地理院</a>'});
+ L.control.layers({'標準地図':std,'航空写真':photo}).addTo(map);
+ marker=L.marker([config.lat,config.lon],{draggable:true}).addTo(map);
+ viewLines=L.layerGroup().addTo(map);
+ map.on('click',e=>selectPoint(e.latlng.lat,e.latlng.lng));
+ marker.on('dragend',()=>{const p=marker.getLatLng();selectPoint(p.lat,p.lng)});
+ for(const id of ['lat','lon'])$(id).addEventListener('change',()=>{const a=+$('lat').value,b=+$('lon').value;if($('lat').value&&$('lon').value&&Number.isFinite(a)&&Number.isFinite(b))selectPoint(a,b,true)});
+ $('search').addEventListener('click',async()=>{
+  const q=$('place').value.trim();if(!q)return;
+  $('search').disabled=true;$('mapstatus').textContent='検索中…';
+  try{
+   const r=await fetch('https://msearch.gsi.go.jp/address-search/AddressSearch?q='+encodeURIComponent(q),{signal:AbortSignal.timeout(10000)});
+   if(!r.ok)throw Error('HTTP '+r.status);
+   const data=await r.json(),list=$('results');list.replaceChildren();
+   const valid=data.filter(x=>x.geometry?.coordinates?.length===2);
+   if(!valid.length){list.hidden=true;$('mapstatus').textContent='検索結果なし。地図で選択してください。';return}
+   for(const x of valid.slice(0,20)){const el=document.createElement('option');el.value=x.geometry.coordinates.join(',');el.textContent=x.properties.title;list.append(el)}
+   list.hidden=false;list.dispatchEvent(new Event('change'));
+  }catch(e){$('mapstatus').textContent='検索失敗。地図で選択してください。'}finally{$('search').disabled=false}
+ });
+ $('results').addEventListener('change',()=>{const [lon,lat]=$('results').value.split(',').map(Number);if(Number.isFinite(lat)&&Number.isFinite(lon))selectPoint(lat,lon,true)});
+ $('place').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('search').click()}});
+ updateMapDirection();
 }
 $('location').addEventListener('submit',async e=>{
  e.preventDefault();config={lat:+$('lat').value,lon:+$('lon').value,height:+$('height').value,date:$('date').value};
  if(!Number.isFinite(Date.parse(config.date+'T00:00:00+09:00')))return;
  try{await compute()}catch(err){profile=null;$('status').textContent='計算失敗：'+err.message;render();events()}finally{$('load').disabled=false}
 });
-for(const id of ['time','view','path','layers','light'])$(id).addEventListener('input',render);
+for(const id of ['time','projection','bearing','pitch','fov','aspect','grid','path','layers','light'])$(id).addEventListener('input',render);
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});
 $('save').addEventListener('click',()=>{canvas.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RidgeArc-'+config.date+'-'+clock(+$('time').value).replace(':','')+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)})});
 recomputeDay();render();
+$('faceSun').addEventListener('click',()=>{const s=day[+$('time').value];if(s){$('bearing').value=Math.round(s.az)%360;$('pitch').value=Math.round(clamp(s.alt,-45,60));render()}});
+initMap();
