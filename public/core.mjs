@@ -101,3 +101,30 @@ export function terrainBounds(frame,out,step=.25){
  }
  return {low:Math.max(-45,low-3),high:Math.min(89.8,high+3)};
 }
+
+// Visible angular intervals from the continuous radial terrain profile.
+// A farther segment is visible only when it exceeds every nearer elevation slope.
+export function visibleSurface(samples,eye,eyeHeight){
+ const segments=[];let max=-Infinity,prev={d:0,h:-Math.max(eyeHeight,.001)},gap=false;
+ for(const p of samples){
+  if(p.h==null||!Number.isFinite(p.h)){if(prev.d>0)gap=true;continue;}
+  const h=p.h-eye-p.d*p.d/(2*6371000),s=h/p.d;
+  if(s>max){
+   if(!gap&&p.d>prev.d){
+    const m=(h-prev.h)/(p.d-prev.d),b=h-m*p.d;
+    segments.push({hi:s,m,b,d:p.d,near:prev.d});
+   }else segments.push({hi:s,m:0,b:0,d:p.d,near:p.d});
+   max=s;
+  }
+  prev={d:p.d,h};gap=false;
+ }
+ return {segments,angle:segments.length?Math.atan(max)*180/Math.PI:null};
+}
+export function surfaceDistance(surface,slope){
+ const a=surface.segments;if(!a.length)return null;
+ let lo=0,hi=a.length-1;
+ while(lo<hi){const mid=(lo+hi)>>1;if(a[mid].hi>=slope)hi=mid;else lo=mid+1}
+ const p=a[lo];
+ if(slope>p.hi||Math.abs(slope-p.m)<1e-12||p.b===0)return p.d;
+ return Math.max(p.near,Math.min(p.d,p.b/(slope-p.m)));
+}

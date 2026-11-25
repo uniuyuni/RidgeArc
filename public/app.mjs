@@ -1,4 +1,4 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 let config={lat:35.416459,lon:139.048985,height:1.6,date:'2026-11-22'},profile=null,coverage=0,day=[],timer=null,frame=null;
 // High-resolution requests are restricted to the immediate foreground.
@@ -78,23 +78,17 @@ async function compute(){
  const stats={};
  for(const source of sourcePlan)await resolveSamples(samples,ground,source,stats);
  if(ground.h==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
- const eye=ground.h+config.height,out=bands.map(()=>[]),total=[];
+ const eye=ground.h+config.height,total=[],surfaces=[];
  let valid=0,count=0;
  for(const ray of rays){
-  let max=null;
-  ray.forEach((seg,k)=>{
-   let best=null;
-   for(const p of seg){
-    // Do not claim sub-grid detail when only a coarser model is available.
-    if(p.h==null&&p.d<5&&ground.source!=='1m')continue;
-    if(p.h==null&&p.d<10&&seg.some(q=>q.source==='10m'))continue;
-    count++;if(p.h==null)continue;valid++;
-    const a=elevationAngle(p.h,eye,p.d);if(best==null||a>best)best=a;
-   }
-   out[k].push(best);if(best!=null&&(max==null||best>max))max=best;
-  });total.push(max);
+  const samples=ray.flat();
+  for(const p of samples){if(p.d<10&&p.h==null)continue;count++;if(p.h!=null)valid++;}
+  // No distance-band silhouettes: use all terrain samples in increasing range.
+  const surface=visibleSurface(samples,eye,config.height);
+  surfaces.push(surface);total.push(surface.angle);
  }
- coverage=count?valid/count:0;profile={out,total,eye,bounds:terrainBounds(frame,out,step)};
+ coverage=count?valid/count:0;
+ profile={total,surfaces,eye,bounds:terrainBounds(frame,[total],step),terrainCache:null};
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
  $('status').textContent='観測高 '+eye.toFixed(1)+'m（'+ground.source+' DEM＋指定高）｜近距離 '+(detail||'取得なし')+'｜サンプル取得率 '+Math.round(coverage*100)+'%｜'+tiles.size+'タイル。'+(coverage<.999?'欠損のため遮蔽判定は暫定。':'70km以遠と植生は未考慮。');
  tiles.clear();render();events();
@@ -161,18 +155,41 @@ function render(){
  if(s.alt>=-2){ctx.beginPath();polygon(s);ctx.fillStyle='#fff2ad';ctx.fill();}
  // Cylindrical panorama: each screen column corresponds to one azimuth.
  function rayAt(px,py){return [wrap(left+(px-48)/scale),panoramaAltitude(top-(py-22)/scale)];}
- function land(values,color){
-  let run=[];
-  function flush(){if(run.length<2){run=[];return;}ctx.beginPath();ctx.moveTo(run[0][0],22+plotH);for(const q of run)ctx.lineTo(...q);ctx.lineTo(run.at(-1)[0],22+plotH);ctx.closePath();ctx.fillStyle=color;ctx.fill();run=[];}
-  const columns=Math.ceil(span/step);
-  for(let i=0;i<=columns;i++){
-   const a=left+span*i/columns,h=horizonAt(values,a,step);
-   if(h==null){flush();continue}
-   const px=48+plotW*i/columns,py=clamp(22+(top-panoramaY(h))*scale,22,22+plotH);
-   run.push([px,py]);
-  }flush();
+ // Render first-hit distances, not arbitrary range boundaries. Cache terrain
+ // pixels so time slider changes do not recalculate the geometry.
+ if(profile){
+  const shaded=$('layers').checked;
+  const key=[plotW,plotH,left,span,top,bottom,shaded].join('/');
+  if(profile.terrainCache?.key!==key){
+   const terrain=document.createElement('canvas');terrain.width=plotW;terrain.height=plotH;
+   const tc=terrain.getContext('2d'),img=tc.createImageData(plotW,plotH),pixels=img.data;
+   const slopes=Float64Array.from({length:plotH},(_,y)=>Math.tan(panoramaAltitude(top-(y+.5)/scale)*DEG));
+   const color=d=>{
+    // Continuous atmospheric distance cue; not a physical illumination model.
+    const t=clamp(Math.log1p(d/30)/Math.log1p(70000/30),0,1);
+    return t;
+   };
+   for(let x=0;x<plotW;x++){
+    const az=wrap(left+(x+.5)/scale),f=az/step,i=Math.floor(f)%N,j=(i+1)%N,w=f-Math.floor(f);
+    const h=horizon(az);if(h==null)continue;
+    const y0=clamp(Math.floor((top-panoramaY(h))*scale),0,plotH);
+    for(let y=y0;y<plotH;y++){
+     const cover=clamp(y+1-(top-panoramaY(h))*scale,0,1);
+     if(cover<=0)continue;
+     let t=0;
+     if(shaded){
+      const d0=surfaceDistance(profile.surfaces[i],slopes[y]),d1=surfaceDistance(profile.surfaces[j],slopes[y]);
+      if(d0==null&&d1==null)continue;
+      t=d0==null?color(d1):d1==null?color(d0):color(d0)*(1-w)+color(d1)*w;
+     }
+     const k=(y*plotW+x)*4;
+     pixels[k]=Math.round(25+107*t);pixels[k+1]=Math.round(43+108*t);pixels[k+2]=Math.round(56+112*t);pixels[k+3]=Math.round(255*cover);
+    }
+   }
+   tc.putImageData(img,0,0);profile.terrainCache={key,terrain};
+  }
+  ctx.drawImage(profile.terrainCache.terrain,48,22);
  }
- if(profile){const colors=['#192b38','#29404e','#3b5564','#536d7f','#8497a8'];if($('layers').checked){for(let k=profile.out.length-1;k>=0;k--)land(profile.out[k],colors[k])}else land(profile.total,colors[0]);}
  if($('path').checked){
   // Show the complete swept disk even when it lies behind a ridge; the solid
   // current disk was drawn before terrain and is correctly hidden by it.

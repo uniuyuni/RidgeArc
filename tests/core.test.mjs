@@ -18,3 +18,7 @@ test('auto sunrise to sunset frame and north crossing',()=>{const f=daylightFram
 import {elevationStencil,interpolatedHeight,terrainBounds} from '../public/core.mjs';
 test('bilinear elevation preserves constant surface and missing data',()=>{const s=elevationStencil(35.4,139.04,15);assert.ok(Math.abs(s.reduce((a,p)=>a+p.w,0)-1)<1e-10);assert.ok(Math.abs(interpolatedHeight(s,()=>123)-123)<1e-9);assert.equal(interpolatedHeight(s,()=>null),null)});
 test('near terrain expands visible lower bound without including rear directions',()=>{const a=Array(8).fill(null);a[4]=-27;a[0]=-80;a[3]=15;assert.deepEqual(terrainBounds({center:180,span:100},[a],45),{low:-30,high:18});a[4]=-80;assert.equal(terrainBounds({center:180,span:100},[a],45).low,-45)});
+
+import {visibleSurface,surfaceDistance} from '../public/core.mjs';
+test('flat terrain has continuous first-hit distance without artificial range boundaries',()=>{const s=visibleSurface([10,20,50,100,200].map(d=>({d,h:0})),2,2);assert.ok(Math.abs(surfaceDistance(s,-.1)-20)<.01);assert.ok(Math.abs(surfaceDistance(s,-.2)-10)<.01)});
+test('a farther slope behind a hill is hidden until it rises above the nearer skyline',()=>{const s=visibleSurface([{d:10,h:2},{d:20,h:12},{d:30,h:0},{d:100,h:40},{d:150,h:100}],2,2);assert.ok(surfaceDistance(s,.4)<=20);assert.ok(surfaceDistance(s,.55)>100);assert.equal(s.segments.length,3)});
