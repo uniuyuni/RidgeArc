@@ -1,6 +1,8 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
-let config={lat:35.416459,lon:139.048985,height:1.6,date:'2026-11-22'},profile=null,coverage=0,day=[],timer=null,frame=null;
+const todayJST=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
+let config={lat:35.416459,lon:139.048985,height:1.6,date:todayJST},profile=null,coverage=0,day=[],timer=null,frame=null,terrainStatus='';
+$('date').value=todayJST;
 // High-resolution requests are restricted to the immediate foreground.
 const bands=[
  {start:2,end:80,inc:2,quality:'fine'},
@@ -78,37 +80,49 @@ async function compute(){
  const stats={};
  for(const source of sourcePlan)await resolveSamples(samples,ground,source,stats);
  if(ground.h==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
- const eye=ground.h+config.height,total=[],surfaces=[];
+ const eye=ground.h+config.height,total=[],surfaces=[],complete=[];
  let valid=0,count=0;
  for(const ray of rays){
   const samples=ray.flat();
-  for(const p of samples){if(p.d<10&&p.h==null)continue;count++;if(p.h!=null)valid++;}
+  let rayValid=0,rayCount=0;
+  for(const p of samples){if(p.d<10&&p.h==null)continue;count++;rayCount++;if(p.h!=null){valid++;rayValid++;}}
+  complete.push(rayCount>0&&rayValid===rayCount);
   // No distance-band silhouettes: use all terrain samples in increasing range.
   const surface=visibleSurface(samples,eye,config.height);
   surfaces.push(surface);total.push(surface.angle);
  }
  coverage=count?valid/count:0;
- profile={total,surfaces,eye,bounds:terrainBounds(frame,[total],step),terrainCache:null};
+ profile={total,surfaces,complete,eye,locationKey:[config.lat,config.lon,config.height].join('/'),bounds:terrainBounds(frame,[total],step),terrainCache:null};
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
- $('status').textContent='観測高 '+eye.toFixed(1)+'m（'+ground.source+' DEM＋指定高）｜近距離 '+(detail||'取得なし')+'｜サンプル取得率 '+Math.round(coverage*100)+'%｜'+tiles.size+'タイル。'+(coverage<.999?'欠損のため遮蔽判定は暫定。':'70km以遠と植生は未考慮。');
+ terrainStatus='観測高 '+eye.toFixed(1)+'m（'+ground.source+' DEM＋指定高）｜近距離 '+(detail||'取得なし')+'｜サンプル取得率 '+Math.round(coverage*100)+'%｜'+tiles.size+'タイル。'+(coverage<.999?'欠損のため遮蔽判定は暫定。':'70km以遠と植生は未考慮。');
+ $('status').textContent=terrainStatus;
  tiles.clear();render();events();
 }
 function horizon(a){return profile?horizonAt(profile.total,a,step):null}
+function directionComplete(a){
+ if(!profile)return false;
+ const f=wrap(a)/step,i=Math.floor(f)%N;
+ return profile.complete[i]&&(f-Math.floor(f)<1e-10||profile.complete[(i+1)%N]);
+}
+function estimate(s){return visibilityEstimate(s,horizon,directionComplete)}
 function events(){
  const box=$('events');box.replaceChildren();
  if(!profile){box.textContent='地形を計算してください。';return;}
- if(coverage<.5){box.textContent='標高データの欠損が多いため、イベント判定を中止しました。';return;}
- let prev=null;
- for(let m=0;m<1440;m++){
-  const s=day[m],v=s.alt<-2?0:diskVisibility(s,horizon);
-  const state=v==null?null:v===0?0:v===1?2:1;
-  if(m&&prev!=null&&state!=null&&state!==prev){
-   let label=state===0?'完全遮蔽':prev===0?'出現開始':state===1?'部分遮蔽':'全円盤出現';
-   if(prev===0&&state===2)label='全円盤出現';
-   const el=document.createElement('span');el.textContent=clock(m)+' '+label;box.append(el);
-  }prev=state;
+ const evaluate=m=>{
+  const s=sunPosition(config.date,m,config.lat,config.lon);
+  const v=estimate(s);
+  return {state:v.estimate==null?null:v.estimate===0?0:v.estimate===1?2:1,uncertain:v.uncertain};
+ };
+ const contacts=contactEvents(evaluate);
+ for(const c of contacts){
+  const label=c.to===0?'完全遮蔽':c.from===0?'出現開始':c.to===2?'全円盤出現':'部分遮蔽';
+  const m=Math.min(1439,Math.round(c.minute));
+  const el=document.createElement('button');el.type='button';el.className='eventbutton';
+  el.textContent=clock(m)+' '+label+(c.uncertain?'（暫定）':'');
+  el.title='クリックして時刻を移動。地形・大気・時間サンプリングの誤差を含む概算。';
+  el.addEventListener('click',()=>{$('time').value=m;render()});box.append(el);
  }
- if(!box.children.length)box.textContent='判定できる変化なし（または欠損）。';
+ if(!box.children.length)box.textContent='取得済み地形で判定できる変化なし（欠損・短時間の変化は未検出の場合があります）。';
 }
 function render(){
  const f=frame||daylightFrame(day),{center,span}=f,left=center-span/2,right=center+span/2;
@@ -122,8 +136,9 @@ function render(){
  $('frameInfo').textContent='水平範囲 '+Math.round(wrap(left))+'° → '+Math.round(wrap(right))+'°（約 '+Math.round(span)+'°）｜山の形を局所的に保つ円筒投影';
  const m=+$('time').value,s=day[m]||sunPosition(config.date,m,config.lat,config.lon);
  $('clock').textContent=clock(m);$('az').textContent=s.az.toFixed(2)+'°';$('alt').textContent=s.alt.toFixed(2)+'°';
- const vis=profile&&coverage>=.5?diskVisibility(s,horizon):null;
- $('visible').textContent=vis==null?'—':Math.round(vis*100)+'%';
+ const vis=profile?estimate(s):null;
+ $('visible').textContent=vis==null||vis.estimate==null?'—':Math.round(vis.estimate*100)+'%'+(vis.uncertain?'※':'');
+ $('visibleNote').textContent=vis?.uncertain?'※ この方向に標高欠損。取得済み地形のみの推定。':vis?.missingHorizon?'この方向の地形が不足しています。':'取得済みの裸地DEMによる概算';
  ctx.fillStyle='#172431';ctx.fillRect(0,0,width,H);
  ctx.save();ctx.beginPath();ctx.rect(48,22,plotW,plotH);ctx.clip();
  let g=ctx.createLinearGradient(0,22,0,22+plotH);
@@ -253,7 +268,12 @@ function initMap(){
 $('location').addEventListener('submit',async e=>{
  e.preventDefault();config={lat:+$('lat').value,lon:+$('lon').value,height:+$('height').value,date:$('date').value};
  if(!Number.isFinite(Date.parse(config.date+'T00:00:00+09:00')))return;
- try{await compute()}catch(err){profile=null;$('status').textContent='計算失敗：'+err.message;render();events()}finally{$('load').disabled=false}
+ try{
+  if(profile&&profile.locationKey===[config.lat,config.lon,config.height].join('/')){
+   recomputeDay();profile.bounds=terrainBounds(frame,[profile.total],step);profile.terrainCache=null;
+   $('status').textContent=terrainStatus+' 日付変更：標高データ再利用。';render();events();
+  }else await compute();
+ }catch(err){profile=null;$('status').textContent='計算失敗：'+err.message;render();events()}finally{$('load').disabled=false}
 });
 for(const id of ['time','zoom','grid','path','layers','light'])$(id).addEventListener('input',render);
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});

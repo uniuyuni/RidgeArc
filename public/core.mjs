@@ -128,3 +128,41 @@ export function surfaceDistance(surface,slope){
  if(Math.abs(slope-p.m)<1e-12||p.b===0)return p.d;
  return Math.max(p.near,Math.min(p.d,p.b/(slope-p.m)));
 }
+
+// Bounds conditioned on the sampled terrain model; unsampled terrain may hide visible points.
+export function visibilityEstimate(s,horizon,quality){
+ let visible=0,knownVisible=0,total=0,unknown=0,missingHorizon=0;
+ const c=Math.max(.05,Math.cos(s.alt*Math.PI/180));
+ for(let y=-9;y<=9;y++)for(let x=-9;x<=9;x++){
+  if(x*x+y*y>81)continue;
+  const az=s.az+x*s.radius/(9*c),alt=s.alt+y*s.radius/9,h=horizon(az);total++;
+  if(h==null){unknown++;missingHorizon++;continue;}
+  if(alt>h){
+   visible++;
+   if(quality(az))knownVisible++;else unknown++;
+  }
+ }
+ return {estimate:missingHorizon?null:visible/total,lower:knownVisible/total,upper:(knownVisible+unknown)/total,uncertain:unknown>0,missingHorizon:missingHorizon>0};
+}
+// Contact search with 15-second scan and one-second numerical refinement.
+export function contactEvents(evaluate,start=0,end=1440,interval=.25){
+ const out=[];let t0=start,p=evaluate(t0);
+ for(let t=Math.min(start+interval,end);t<=end&&t>t0;t=Math.min(t+interval,end)){
+  const q=evaluate(t);
+  if(p.state!=null&&q.state!=null&&p.state!==q.state){
+   // Resolve both transitions separately if the coarse interval crosses the full disk.
+   const from=p.state,to=q.state,direction=Math.sign(to-from);
+   for(let target=from+direction;direction*(target-to)<=0;target+=direction){
+    let lo=t0,hi=t,valid=true,uncertain=p.uncertain||q.uncertain;
+    while(hi-lo>1/60){
+     const mid=(hi+lo)/2,r=evaluate(mid);uncertain||=r.uncertain;
+     if(r.state==null){valid=false;break;}
+     if(direction*(r.state-target)>=0)hi=mid;else lo=mid;
+    }
+    if(valid)out.push({minute:hi,from:target-direction,to:target,uncertain});
+   }
+  }
+  t0=t;p=q;if(t===end)break;
+ }
+ return out;
+}
