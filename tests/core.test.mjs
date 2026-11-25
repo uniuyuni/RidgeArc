@@ -51,3 +51,7 @@ test('cyclic panorama crops continuously across north',()=>{assert.deepEqual(pan
 import {zoomWindow,zoomAnchor} from '../public/core.mjs';
 test('zoom preserves aspect and stays within vertical panorama',()=>{for(const z of [1,2,4,8]){const w=zoomWindow(45,-20,z,3);assert.ok(Math.abs(w.top-w.bottom-65/z)<1e-9);assert.ok(w.top<=45&&w.bottom>=-20)}});
 test('zoom anchor retains selected angular point',()=>{const a=zoomAnchor(250,10,120,60,4,2,.8,.2);assert.ok(Math.abs(a.center+.3*60-(250+.3*120))<1e-9);assert.ok(Math.abs(a.mid+.3*30-(10+.3*60))<1e-9)});
+
+import {shiftDate,dateRange} from '../public/core.mjs';
+test('calendar shifts across leap day and year boundary',()=>{assert.equal(shiftDate('2028-02-28',1),'2028-02-29');assert.equal(shiftDate('2026-12-31',1),'2027-01-01');assert.equal(shiftDate('2027-01-01',-1),'2026-12-31')});
+test('date range is inclusive, bounded, and honors step',()=>{assert.deepEqual(dateRange('2027-03-01','2027-03-07',4),['2027-03-01','2027-03-05','2027-03-07']);assert.equal(dateRange('2027-03-07','2027-03-01'),null);assert.equal(dateRange('2027-01-01','2028-01-02'),null);assert.equal(dateRange('2028-01-01','2028-12-31').length,366)});

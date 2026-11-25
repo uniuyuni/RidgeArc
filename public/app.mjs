@@ -1,8 +1,9 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay,panoramaSlices,zoomWindow,zoomAnchor} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay,panoramaSlices,zoomWindow,zoomAnchor,shiftDate,dateRange} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 const todayJST=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
 let config={lat:35.416459,lon:139.048985,height:1.6,date:todayJST},profile=null,coverage=0,day=[],timer=null,frame=null,terrainStatus='';
-let viewOffset=0,panFrame=0,viewY=null,viewGeometry=null;
+let viewOffset=0,panFrame=0,viewY=null,viewGeometry=null,viewFrame=null,framePoint=null;
+let comparison={key:'',paths:[]},comparisonTimer=null,dateRAF=0,hitSegments=[];
 let terrainData=null,busy=false,pending=null,changeTimer=null,settleTimer=null,desired=null;
 const pointKey=c=>[c.lat,c.lon].join('/');
 $('date').value=todayJST;
@@ -45,7 +46,51 @@ function getTile(key){
  while(tiles.size>MAX_TILES)tiles.delete(tiles.keys().next().value);
  return entry.task;
 }
-function recomputeDay(){day=Array.from({length:1440},(_,m)=>sunPosition(config.date,m,config.lat,config.lon));frame=daylightFrame(day)}
+function recomputeDay(){
+ day=Array.from({length:1440},(_,m)=>sunPosition(config.date,m,config.lat,config.lon));frame=daylightFrame(day);
+ const key=pointKey(config);
+ if(!viewFrame||framePoint!==key){viewFrame=frame;framePoint=key;viewOffset=0;viewY=null;}
+}
+function currentViewFrame(){return viewFrame||frame||daylightFrame(day)}
+function syncDateSlider(){
+ const date=$('date').value;if(!date)return;
+ const start=date.slice(0,4)+'-01-01',end=date.slice(0,4)+'-12-31';
+ $('dateSlider').max=Math.round((Date.parse(end+'T00:00:00Z')-Date.parse(start+'T00:00:00Z'))/86400000);
+ $('dateSlider').value=Math.round((Date.parse(date+'T00:00:00Z')-Date.parse(start+'T00:00:00Z'))/86400000);
+ $('dateLabel').textContent=date.replace(/-/g,'/');$('dateSlider').setAttribute('aria-valuetext',date);
+}
+function selectDate(date,preview=false){
+ if(!date)return;
+ $('date').value=date;syncDateSlider();
+ // Reuse the geometry and full-resolution terrain texture during date scrubbing.
+ const target=readConfig();
+ if(target&&profile&&terrainData?.key===pointKey(target)&&pointKey(config)===pointKey(target)&&target.height===config.height&&!busy){
+  desired=target;clearTimeout(changeTimer);clearTimeout(settleTimer);pending=null;
+  if(dateRAF)cancelAnimationFrame(dateRAF);
+  if(preview)dateRAF=requestAnimationFrame(()=>{dateRAF=0;applyTerrain(target,'date')});
+  else{dateRAF=0;applyTerrain(target);}
+ }else scheduleUpdate(preview?60:0,preview?'date':false);
+}
+function comparisonPaths(){
+ if(!$('compare').checked)return [];
+ const start=$('compareStart').value,end=$('compareEnd').value,interval=+$('compareStep').value;
+ const key=[config.lat,config.lon,start,end,interval].join('/');
+ if(comparison.key===key)return comparison.paths;
+ const dates=dateRange(start,end,interval);
+ if(!dates){comparison={key,paths:[]};$('compareInfo').textContent='開始日〜終了日を正しく指定してください（最大366日）。';$('comparePick').replaceChildren();return [];}
+ const paths=dates.map((date,i)=>{
+  const fraction=dates.length===1?.5:i/(dates.length-1),color='hsl('+Math.round(190+fraction*125)+' 85% 72%)';
+  const points=[];
+  for(let m=0;m<1440;m+=5){const p=sunPosition(date,m,config.lat,config.lon);points.push({...p,minute:m});}
+  return {date,color,points};
+ });
+ comparison={key,paths};
+ const pick=$('comparePick');pick.replaceChildren();
+ const placeholder=document.createElement('option');placeholder.value='';placeholder.textContent='日付を選択…';pick.append(placeholder);
+ for(const p of paths){const opt=document.createElement('option');opt.value=p.date;opt.textContent=p.date;pick.append(opt);}
+ $('compareInfo').textContent=dates.length+'日分（'+start+' 〜 '+end+'）｜青→紫：日付順。線をクリックして日付を選択。';
+ return paths;
+}
 function lookup(p,loaded,source){const a=loaded.get(source+'/'+p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
 function stencil(sample,source){
  return source.smooth?elevationStencil(sample.lat,sample.lon,source.z):[{...tilePixel(sample.lat,sample.lon,source.z),w:1}];
@@ -113,11 +158,11 @@ function applyTerrain(target,preview=false){
   const surfaces=terrainData.heights.map(h=>projectTerrainRay(terrainData.distances,h,terrainData.ground,target.height));
   const total=surfaces.map(s=>s.angle);
   profile={total,surfaces,complete:terrainData.complete,eye:terrainData.ground+target.height,bounds:terrainBounds(frame,[total],step),terrainCache:null};
- }else if(!sameDate){profile.bounds=terrainBounds(frame,[profile.total],step);profile.terrainCache=null;}
+ }else if(!sameDate){profile.bounds=terrainBounds(frame,[profile.total],step);}
  coverage=terrainData.coverage;
  terrainStatus='地表標高 '+terrainData.ground.toFixed(1)+'m ｜ 視点標高 '+profile.eye.toFixed(1)+'m（地上高 '+target.height.toFixed(1)+'m）｜ '+terrainData.source+' DEM ｜ 近距離 '+(terrainData.detail||'取得なし')+' ｜ 取得率 '+Math.round(coverage*100)+'%';
  $('status').textContent=terrainStatus+(preview?' ｜ 更新中…':'')+(coverage<.999?' ｜ 欠損あり':'');
- render(preview);
+ render(preview===true);
  clearTimeout(settleTimer);
  if(preview){$('events').textContent='遮蔽時刻を更新中…';settleTimer=setTimeout(()=>{if(!busy&&!pending&&desired&&pointKey(desired)===pointKey(config)&&desired.height===config.height&&desired.date===config.date){render();events();$('status').textContent=terrainStatus+(coverage<.999?' ｜ 欠損あり':'');}},240);}
  else events();
@@ -191,7 +236,7 @@ function events(){
  if(!box.children.length)box.textContent='取得済み地形で判定できる変化なし（欠損・短時間の変化は未検出の場合があります）。';
 }
 function render(preview=false){
- const f=frame||daylightFrame(day),baseSpan=f.span,center=wrap(f.center+viewOffset),zoom=+$('zoom').value/100,span=baseSpan/zoom,left=center-span/2,right=center+span/2;
+ const f=currentViewFrame(),baseSpan=f.span,center=wrap(f.center+viewOffset),zoom=+$('zoom').value/100,span=baseSpan/zoom,left=center-span/2,right=center+span/2;
  let baseTop=f.top,baseBottom=f.bottom;
  if(profile){const bounds=profile.panBounds||(profile.panBounds=terrainBounds({center:180,span:360},[profile.total],step));baseTop=Math.max(baseTop,panoramaY(bounds.high));baseBottom=Math.min(baseBottom,panoramaY(bounds.low));}
  const {top,bottom,mid}=zoomWindow(baseTop,baseBottom,zoom,viewY);
@@ -287,6 +332,26 @@ function render(preview=false){
    ctx.drawImage(texture,piece.x,sourceY,piece.width,sourceH,dx,22,dw,plotH);dx+=dw;
   }
  }
+ // Date-range paths are solar-center trajectories, drawn independently of selected-day disk.
+ hitSegments=[];
+ const paths=comparisonPaths();
+ for(const path of paths){
+  if(path.date===config.date)continue;
+  ctx.beginPath();ctx.strokeStyle=path.color;ctx.globalAlpha=paths.length>90?.35:paths.length>30?.55:.85;ctx.lineWidth=1.3;
+  let prev=null;
+  for(const p of path.points){
+   if(p.alt<-2){prev=null;continue;}
+   const q=project(p.az,p.alt);
+   if(!prev||Math.abs(q[0]-prev.q[0])>plotW*.6){ctx.moveTo(...q);}
+   else{
+    ctx.lineTo(...q);
+    if(Math.max(q[0],prev.q[0])>=48&&Math.min(q[0],prev.q[0])<=48+plotW&&Math.max(q[1],prev.q[1])>=22&&Math.min(q[1],prev.q[1])<=22+plotH)hitSegments.push({a:prev.q,b:q,date:path.date,m0:prev.m,m1:p.minute});
+   }
+   prev={q,m:p.minute};
+  }
+  ctx.stroke();
+ }
+ ctx.globalAlpha=1;
  if($('path').checked){
   // Show the complete swept disk even when it lies behind a ridge; the solid
   // current disk was drawn before terrain and is correctly hidden by it.
@@ -305,7 +370,7 @@ function render(preview=false){
 let map=null,marker=null,viewLines=null;
 function updateMapDirection(){
  if(!map||!marker||!viewLines)return;
- const p=marker.getLatLng(),o=frame||daylightFrame(day),center=wrap(o.center+viewOffset),span=o.span/(+$('zoom').value/100);
+ const p=marker.getLatLng(),o=currentViewFrame(),center=wrap(o.center+viewOffset),span=o.span/(+$('zoom').value/100);
  viewLines.clearLayers();
  for(const [a,style] of [[center,{weight:2,dashArray:'5 5'}],[center-span/2,{weight:1}],[center+span/2,{weight:1}]]){
   const q=destination(p.lat,p.lng,a,5000);
@@ -355,7 +420,17 @@ function syncHeight(){
 $('height').addEventListener('input',()=>{syncHeight();scheduleUpdate(90,true)});
 $('heightRange').addEventListener('input',()=>{$('height').value=$('heightRange').value;scheduleUpdate(90,true)});
 for(const id of ['height','heightRange'])$(id).addEventListener('change',()=>scheduleUpdate(0));
-$('date').addEventListener('change',()=>scheduleUpdate(0));
+$('date').addEventListener('change',()=>selectDate($('date').value));
+$('dateSlider').addEventListener('input',()=>selectDate(shiftDate($('date').value.slice(0,4)+'-01-01',+$('dateSlider').value),true));
+$('dateSlider').addEventListener('change',()=>selectDate($('date').value));
+$('prevDate').addEventListener('click',()=>selectDate(shiftDate($('date').value,-1)));
+$('nextDate').addEventListener('click',()=>selectDate(shiftDate($('date').value,1)));
+$('compareStart').value=todayJST;$('compareEnd').value=shiftDate(todayJST,14);
+$('compare').addEventListener('change',()=>{$('compareFields').hidden=!$('compare').checked;render()});
+for(const id of ['compareStart','compareEnd','compareStep'])$(id).addEventListener('change',()=>{clearTimeout(comparisonTimer);comparisonTimer=setTimeout(()=>render(),80)});
+$('comparePick').addEventListener('change',()=>{if($('comparePick').value)selectDate($('comparePick').value);});
+$('compareAround').addEventListener('click',()=>{$('compareStart').value=shiftDate($('date').value,-7);$('compareEnd').value=shiftDate($('date').value,7);$('compareStep').value='1';render()});
+syncDateSlider();
 for(const id of ['time','grid','path','layers','light'])$(id).addEventListener('input',render);
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});
 $('save').addEventListener('click',()=>{canvas.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RidgeArc-'+config.date+'-'+clock(+$('time').value).replace(':','')+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)})});
@@ -368,7 +443,7 @@ function changeZoom(value,anchor=null){
   if(z===1)viewY=null;
   else if(anchor){
    const p=zoomAnchor(g.center,g.mid,g.span,g.top-g.bottom,z,g.zoom,anchor.u,anchor.v);
-   viewOffset=angleDelta(p.center,(frame||daylightFrame(day)).center);viewY=p.mid;
+   viewOffset=angleDelta(p.center,currentViewFrame().center);viewY=p.mid;
   }else if(g.zoom===1){
    const h=horizon(g.center);viewY=h==null?g.mid:panoramaY(h);
   }
@@ -381,7 +456,7 @@ $('zoomOut').addEventListener('click',()=>changeZoom(+$('zoom').value-50));
 $('panRange').addEventListener('input',()=>panTo(+$('panRange').value));
 $('panLeft').addEventListener('click',()=>panTo(viewOffset-(viewGeometry?.span??120)/4));
 $('panRight').addEventListener('click',()=>panTo(viewOffset+(viewGeometry?.span??120)/4));
-function resetView(){viewOffset=0;viewY=null;$('zoom').value=100;requestView();}
+function resetView(){viewFrame=frame||daylightFrame(day);viewOffset=0;viewY=null;$('zoom').value=100;requestView();}
 $('resetZoom').addEventListener('click',resetView);
 $('resetBearing').addEventListener('click',resetView);
 let drag=null;
@@ -396,7 +471,20 @@ canvas.addEventListener('pointermove',e=>{
  if(drag.zoom>1)viewY=drag.mid+(e.clientY-drag.y)*drag.vertical/Math.max(1,drag.height);
  panTo(drag.offset-(e.clientX-drag.x)*drag.span/Math.max(1,drag.width));
 });
-function endPan(e){if(drag?.id===e.pointerId){drag=null;canvas.classList.remove('dragging');if(viewGeometry&&viewGeometry.zoom>1)viewY=viewGeometry.mid}}
+function pickComparison(e){
+ if(!$('compare').checked||!hitSegments.length||!viewGeometry)return;
+ const r=canvas.getBoundingClientRect(),x=(e.clientX-r.left)*canvas.width/r.width,y=(e.clientY-r.top)*canvas.height/r.height;
+ const g=viewGeometry;if(x<48||x>48+g.plotW||y<22||y>22+g.plotH)return;
+ let best=null,min=(9*canvas.width/r.width)**2;
+ for(const seg of hitSegments){
+  const dx=seg.b[0]-seg.a[0],dy=seg.b[1]-seg.a[1],den=dx*dx+dy*dy;
+  const t=den?clamp(((x-seg.a[0])*dx+(y-seg.a[1])*dy)/den,0,1):0;
+  const d=(x-seg.a[0]-t*dx)**2+(y-seg.a[1]-t*dy)**2;
+  if(d<min){min=d;best={date:seg.date,minute:Math.round(seg.m0+t*(seg.m1-seg.m0))};}
+ }
+ if(best){$('time').value=best.minute;$('comparePick').value=best.date;selectDate(best.date);}
+}
+function endPan(e){if(drag?.id===e.pointerId){const click=e.type==='pointerup'&&Math.hypot(e.clientX-drag.x,e.clientY-drag.y)<4;drag=null;canvas.classList.remove('dragging');if(viewGeometry&&viewGeometry.zoom>1)viewY=viewGeometry.mid;if(click)pickComparison(e);}}
 for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,endPan);
 canvas.addEventListener('wheel',e=>{
  if(!viewGeometry)return;

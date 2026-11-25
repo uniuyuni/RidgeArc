@@ -201,3 +201,19 @@ export function zoomAnchor(center,mid,span,verticalSpan,newZoom,oldZoom,u,v){
  const ratio=oldZoom/newZoom;
  return {center:center+(u-.5)*span*(1-ratio),mid:mid+(.5-v)*verticalSpan*(1-ratio)};
 }
+
+// Calendar arithmetic independent of browser time zone and daylight-saving time.
+export function shiftDate(date,days){
+ const t=Date.parse(date+'T00:00:00Z');
+ return Number.isFinite(t)?new Date(t+days*86400000).toISOString().slice(0,10):null;
+}
+export function dateRange(start,end,interval=1,maxDays=366){
+ const a=Date.parse(start+'T00:00:00Z'),b=Date.parse(end+'T00:00:00Z');
+ if(!Number.isFinite(a)||!Number.isFinite(b)||b<a||!Number.isInteger(interval)||interval<1)return null;
+ const n=Math.round((b-a)/86400000)+1;
+ if(n>maxDays)return null;
+ const out=[];
+ for(let i=0;i<n;i+=interval)out.push(shiftDate(start,i));
+ if(out[out.length-1]!==end)out.push(end);
+ return out;
+}
