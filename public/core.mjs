@@ -183,3 +183,11 @@ export function projectTerrainRay(distances,heights,ground,height){
  }
  return {segments,angle:segments.length?Math.atan(max)*180/Math.PI:null};
 }
+
+// Crop a cyclic north-origin panorama without an artificial seam at 0/360 degrees.
+export function panoramaSlices(left,span,width){
+ const start=((left%360)+360)%360/360*width,length=span/360*width,first=Math.min(length,width-start);
+ const out=[{x:start,width:first,fraction:first/length}];
+ if(length-first>1e-8)out.push({x:0,width:length-first,fraction:(length-first)/length});
+ return out;
+}

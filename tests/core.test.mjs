@@ -44,3 +44,6 @@ test('contact search resolves both transitions in a single interval',()=>{const 
 
 import {projectTerrainRay} from '../public/core.mjs';
 test('compact retained ray matches original visible surface for multiple eye heights',()=>{const samples=[{d:2,h:100},{d:10,h:105},{d:20,h:null},{d:30,h:120},{d:100,h:110}];const ds=Float64Array.from(samples,p=>p.d),hs=Float64Array.from(samples,p=>p.h??NaN);for(const height of [0,1.6,10,30,300])assert.deepEqual(projectTerrainRay(ds,hs,100,height),visibleSurface(samples,100+height,height))});
+
+import {panoramaSlices} from '../public/core.mjs';
+test('cyclic panorama crops continuously across north',()=>{assert.deepEqual(panoramaSlices(300,120,3600),[{x:3000,width:600,fraction:.5},{x:0,width:600,fraction:.5}]);for(const [a,s] of [[100,140],[-45,150],[360,180],[0,360]]){const p=panoramaSlices(a,s,3600);assert.ok(Math.abs(p.reduce((n,x)=>n+x.fraction,0)-1)<1e-10);assert.ok(p.every(x=>x.x>=0&&x.x+x.width<=3600+1e-8));}});

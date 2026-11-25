@@ -1,7 +1,8 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds,visibleSurface,surfaceDistance,visibilityEstimate,contactEvents,projectTerrainRay,panoramaSlices} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 const todayJST=new Date(Date.now()+9*3600000).toISOString().slice(0,10);
 let config={lat:35.416459,lon:139.048985,height:1.6,date:todayJST},profile=null,coverage=0,day=[],timer=null,frame=null,terrainStatus='';
+let viewOffset=0,panFrame=0;
 let terrainData=null,busy=false,pending=null,changeTimer=null,settleTimer=null,desired=null;
 const pointKey=c=>[c.lat,c.lon].join('/');
 $('date').value=todayJST;
@@ -190,15 +191,17 @@ function events(){
  if(!box.children.length)box.textContent='取得済み地形で判定できる変化なし（欠損・短時間の変化は未検出の場合があります）。';
 }
 function render(preview=false){
- const f=frame||daylightFrame(day),{center,span}=f,left=center-span/2,right=center+span/2;
+ const f=frame||daylightFrame(day),span=f.span,center=wrap(f.center+viewOffset),left=center-span/2,right=center+span/2;
  let top=f.top,bottom=f.bottom;
- if(profile){const bounds=profile.bounds;top=Math.max(top,panoramaY(bounds.high));bottom=Math.min(bottom,panoramaY(bounds.low));}
+ if(profile){const bounds=profile.panBounds||(profile.panBounds=terrainBounds({center:180,span:360},[profile.total],step));top=Math.max(top,panoramaY(bounds.high));bottom=Math.min(bottom,panoramaY(bounds.low));}
  const plotW=1800,scale=plotW/span,plotH=Math.round((top-bottom)*scale),width=plotW+78,H=plotH+64;
  if(canvas.width!==width)canvas.width=width;if(canvas.height!==H)canvas.height=H;
  const zoom=+$('zoom').value;canvas.style.width=zoom+'%';$('zoomValue').textContent=zoom+'%';
  const cx=48+plotW/2,cy=22+plotH/2;
  const project=(a,h)=>[cx+angleDelta(a,center)*scale,22+(top-panoramaY(h))*scale];
- $('frameInfo').textContent='水平範囲 '+Math.round(wrap(left))+'° → '+Math.round(wrap(right))+'°（約 '+Math.round(span)+'°）｜山の形を局所的に保つ円筒投影';
+ $('frameInfo').textContent='水平範囲 '+Math.round(wrap(left))%360+'° → '+Math.round(wrap(right))%360+'°（約 '+Math.round(span)+'°）｜中心 '+Math.round(center)%360+'°';
+ $('bearing').textContent=['北','北東','東','南東','南','南西','西','北西'][Math.round(center/45)%8]+' '+Math.round(center)%360+'°';
+ $('panRange').value=viewOffset;
  const m=+$('time').value,s=day[m]||sunPosition(config.date,m,config.lat,config.lon);
  $('clock').textContent=clock(m);$('az').textContent=s.az.toFixed(2)+'°';$('alt').textContent=s.alt.toFixed(2)+'°';
  const vis=profile?estimate(s):null;
@@ -239,8 +242,12 @@ function render(preview=false){
  // pixels so time slider changes do not recalculate the geometry.
  if(profile){
   const shaded=$('layers').checked;
-  const rasterW=preview===true?Math.ceil(plotW/2):plotW,rasterH=preview===true?Math.ceil(plotH/2):plotH,sx=plotW/rasterW,sy=plotH/rasterH;
-  const key=[plotW,plotH,left,span,top,bottom,shaded,rasterW].join('/');
+  // Cache a complete cyclic terrain texture; panning only crops it, never refetches DEM.
+  const quality=preview===true?.5:1;
+  const rasterW=Math.max(1,Math.min(8192,Math.ceil(plotW*360/span*quality)));
+  const rasterH=Math.max(1,Math.min(Math.ceil(plotH*quality),Math.floor(6000000/rasterW)));
+  const sy=plotH/rasterH;
+  const key=[plotW,plotH,span,top,bottom,shaded,rasterW,rasterH].join('/');
   if(profile.terrainCache?.key!==key){
    const terrain=document.createElement('canvas');terrain.width=rasterW;terrain.height=rasterH;
    const tc=terrain.getContext('2d'),img=tc.createImageData(rasterW,rasterH),pixels=img.data;
@@ -251,7 +258,7 @@ function render(preview=false){
     return t;
    };
    for(let x=0;x<rasterW;x++){
-    const az=wrap(left+(x+.5)*sx/scale),f=az/step,i=Math.floor(f)%N,j=(i+1)%N,w=f-Math.floor(f);
+    const az=(x+.5)*360/rasterW,f=az/step,i=Math.floor(f)%N,j=(i+1)%N,w=f-Math.floor(f);
     const h=horizon(az);if(h==null)continue;
     const edge=(top-panoramaY(h))*scale/sy,y0=clamp(Math.floor(edge),0,rasterH);
     for(let y=y0;y<rasterH;y++){
@@ -269,7 +276,12 @@ function render(preview=false){
    }
    tc.putImageData(img,0,0);profile.terrainCache={key,terrain};
   }
-  ctx.drawImage(profile.terrainCache.terrain,48,22,plotW,plotH);
+  const texture=profile.terrainCache.terrain;
+  let dx=48;
+  for(const piece of panoramaSlices(left,span,texture.width)){
+   const dw=plotW*piece.fraction;
+   ctx.drawImage(texture,piece.x,0,piece.width,texture.height,dx,22,dw,plotH);dx+=dw;
+  }
  }
  if($('path').checked){
   // Show the complete swept disk even when it lies behind a ridge; the solid
@@ -289,9 +301,9 @@ function render(preview=false){
 let map=null,marker=null,viewLines=null;
 function updateMapDirection(){
  if(!map||!marker||!viewLines)return;
- const p=marker.getLatLng(),o=frame||daylightFrame(day);
+ const p=marker.getLatLng(),o=frame||daylightFrame(day),center=wrap(o.center+viewOffset);
  viewLines.clearLayers();
- for(const [a,style] of [[o.center,{weight:2,dashArray:'5 5'}],[o.center-o.span/2,{weight:1}],[o.center+o.span/2,{weight:1}]]){
+ for(const [a,style] of [[center,{weight:2,dashArray:'5 5'}],[center-o.span/2,{weight:1}],[center+o.span/2,{weight:1}]]){
   const q=destination(p.lat,p.lng,a,5000);
   L.polyline([p,q],{color:'#de8700',...style,interactive:false}).addTo(viewLines);
  }
@@ -344,5 +356,32 @@ for(const id of ['time','zoom','grid','path','layers','light'])$(id).addEventLis
 $('play').addEventListener('click',()=>{if(timer){clearInterval(timer);timer=null;$('play').textContent='▶ 再生'}else{$('play').textContent='Ⅱ 停止';timer=setInterval(()=>{$('time').value=(+$('time').value+2)%1440;render()},100)}});
 $('save').addEventListener('click',()=>{canvas.toBlob(blob=>{if(!blob)return;const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='RidgeArc-'+config.date+'-'+clock(+$('time').value).replace(':','')+'.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)})});
 recomputeDay();render();
-$('resetZoom').addEventListener('click',()=>{$('zoom').value=100;render();canvas.parentElement.scrollLeft=0});
+function panTo(offset){
+ viewOffset=((offset+180)%360+360)%360-180;
+ if(!panFrame)panFrame=requestAnimationFrame(()=>{panFrame=0;render()});
+}
+$('panRange').addEventListener('input',()=>panTo(+$('panRange').value));
+$('panLeft').addEventListener('click',()=>panTo(viewOffset-30));
+$('panRight').addEventListener('click',()=>panTo(viewOffset+30));
+$('resetZoom').addEventListener('click',()=>{viewOffset=0;$('zoom').value=100;render();canvas.parentElement.scrollLeft=0});
+$('resetBearing').addEventListener('click',()=>panTo(0));
+let drag=null;
+canvas.addEventListener('pointerdown',e=>{
+ if(e.button!==0)return;
+ drag={id:e.pointerId,x:e.clientX,offset:viewOffset,span:(frame||daylightFrame(day)).span,width:canvas.getBoundingClientRect().width};
+ canvas.setPointerCapture(e.pointerId);canvas.classList.add('dragging');
+});
+canvas.addEventListener('pointermove',e=>{
+ if(!drag||drag.id!==e.pointerId)return;
+ panTo(drag.offset-(e.clientX-drag.x)*drag.span/Math.max(1,drag.width)*1878/1800);
+});
+function endPan(e){if(drag?.id===e.pointerId){drag=null;canvas.classList.remove('dragging')}}
+for(const event of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(event,endPan);
+canvas.addEventListener('wheel',e=>{
+ if(!e.shiftKey&&Math.abs(e.deltaX)<=Math.abs(e.deltaY))return;
+ e.preventDefault();
+ const delta=e.shiftKey&&Math.abs(e.deltaY)>Math.abs(e.deltaX)?e.deltaY:e.deltaX;
+ const units=e.deltaMode===1?16:e.deltaMode===2?canvas.clientWidth:1;
+ panTo(viewOffset+delta*units*(frame||daylightFrame(day)).span/Math.max(1,canvas.clientWidth));
+},{passive:false});
 initMap();syncHeight();scheduleUpdate(0);
