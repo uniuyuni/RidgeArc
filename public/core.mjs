@@ -79,3 +79,25 @@ export function daylightFrame(day,margin=12){
  for(const p of active){a+=angleDelta(p.az,a);low=Math.min(low,a);high=Math.max(high,a);peak=Math.max(peak,p.alt+p.radius)}
  return {center:wrap((low+high)/2),span:clamp(high-low+2*margin,40,350),top:Math.min(panoramaY(89.8),Math.max(panoramaY(20),panoramaY(peak)+7)),bottom:panoramaY(-18)};
 }
+
+// Bilinear samples at pixel centers, including tile boundaries. Missing neighbors stay missing.
+export function elevationStencil(lat,lon,z){
+ const n=256*2**z,x=(lon+180)/360*n-.5,y=(1-Math.asinh(Math.tan(lat*DEG))/Math.PI)/2*n-.5;
+ const ix=Math.floor(x),iy=Math.floor(y),fx=x-ix,fy=y-iy;
+ return [[ix,iy,(1-fx)*(1-fy)],[ix+1,iy,fx*(1-fy)],[ix,iy+1,(1-fx)*fy],[ix+1,iy+1,fx*fy]].filter(p=>p[2]>1e-12).map(([px,py,w])=>({key:z+'/'+Math.floor(px/256)+'/'+Math.floor(py/256),i:((py%256)*256+px%256)*4,w}));
+}
+export function interpolatedHeight(stencil,read){
+ let sum=0,w=0;
+ for(const p of stencil){const h=read(p);if(h==null)return null;sum+=h*p.w;w+=p.w}
+ return w>0?sum/w:null;
+}
+export function terrainBounds(frame,out,step=.25){
+ let low=0,high=-90;
+ for(const band of out)for(let i=0;i<band.length;i++){
+  const delta=((i*step-frame.center+540)%360)-180;
+  if(Math.abs(delta)>frame.span/2)continue;
+  const h=band[i];if(h==null||!Number.isFinite(h))continue;
+  low=Math.min(low,h);high=Math.max(high,h);
+ }
+ return {low:Math.max(-45,low-3),high:Math.min(89.8,high+3)};
+}

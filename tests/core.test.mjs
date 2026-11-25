@@ -14,3 +14,7 @@ test('solar circle angular radius at zenith-safe location',()=>{const pts=diskBo
 import {panoramaY,panoramaAltitude,daylightFrame} from '../public/core.mjs';
 test('natural panorama is invertible and locally conformal',()=>{for(const h of [-18,0,15,60,80])assert.ok(Math.abs(panoramaAltitude(panoramaY(h))-h)<1e-9);assert.ok(Math.abs((panoramaY(.001)-panoramaY(-.001))/.002-1)<1e-8)});
 test('auto sunrise to sunset frame and north crossing',()=>{const f=daylightFrame([{az:110,alt:0,radius:.26},{az:180,alt:35,radius:.26},{az:250,alt:0,radius:.26}]);assert.equal(f.center,180);assert.equal(f.span,164);const n=daylightFrame([{az:60,alt:0,radius:.26},{az:0,alt:75,radius:.26},{az:300,alt:0,radius:.26}]);assert.equal(n.center,0);assert.equal(n.span,144)});
+
+import {elevationStencil,interpolatedHeight,terrainBounds} from '../public/core.mjs';
+test('bilinear elevation preserves constant surface and missing data',()=>{const s=elevationStencil(35.4,139.04,15);assert.ok(Math.abs(s.reduce((a,p)=>a+p.w,0)-1)<1e-10);assert.ok(Math.abs(interpolatedHeight(s,()=>123)-123)<1e-9);assert.equal(interpolatedHeight(s,()=>null),null)});
+test('near terrain expands visible lower bound without including rear directions',()=>{const a=Array(8).fill(null);a[4]=-27;a[0]=-80;a[3]=15;assert.deepEqual(terrainBounds({center:180,span:100},[a],45),{low:-30,high:18});a[4]=-80;assert.equal(terrainBounds({center:180,span:100},[a],45).low,-45)});

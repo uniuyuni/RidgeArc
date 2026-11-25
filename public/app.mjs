@@ -1,12 +1,28 @@
-import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame} from './core.mjs';
+import {DEG,clamp,wrap,angleDelta,clock,sunPosition,destination,tilePixel,decodeElevation,elevationAngle,horizonAt,diskVisibility,diskBoundary,panoramaY,panoramaAltitude,daylightFrame,elevationStencil,interpolatedHeight,terrainBounds} from './core.mjs';
 const $=id=>document.getElementById(id), canvas=$('scene'),ctx=canvas.getContext('2d'), step=.25,N=1440;
 let config={lat:35.416459,lon:139.048985,height:1.6,date:'2026-11-22'},profile=null,coverage=0,day=[],timer=null,frame=null;
-const bands=[{start:30,end:2000,inc:25,z:14},{start:2050,end:8000,inc:65,z:13},{start:8150,end:70000,inc:220,z:10}];
+// High-resolution requests are restricted to the immediate foreground.
+const bands=[
+ {start:2,end:80,inc:2,quality:'fine'},
+ {start:85,end:300,inc:5,quality:'near'},
+ {start:310,end:2000,inc:10,quality:'near'},
+ {start:2025,end:8000,inc:40,quality:'mid'},
+ {start:8080,end:70000,inc:180,quality:'far'}
+];
+const sourcePlan=[
+ {id:'dem1a_png',name:'1m',z:17,groups:['fine'],smooth:true,minD:2},
+ {id:'dem5a_png',name:'5m A',z:15,groups:['fine','near'],smooth:true,minD:5},
+ {id:'dem5b_png',name:'5m B',z:15,groups:['fine','near'],smooth:true,minD:5},
+ {id:'dem5c_png',name:'5m C',z:15,groups:['fine','near'],smooth:true,minD:5},
+ {id:'dem_png',name:'10m',z:14,groups:['fine','near'],smooth:true,minD:10},
+ {id:'dem_png',name:'中景',z:13,groups:['mid'],smooth:false,minD:0},
+ {id:'dem_png',name:'遠景',z:10,groups:['far'],smooth:false,minD:0}
+];
 const tiles=new Map();
 function getTile(key){
  if(tiles.has(key))return tiles.get(key);
  const task=(async()=>{
-  const response=await fetch('https://cyberjapandata.gsi.go.jp/xyz/dem_png/'+key+'.png',{signal:AbortSignal.timeout(15000)});
+  const response=await fetch('https://cyberjapandata.gsi.go.jp/xyz/'+key+'.png',{signal:AbortSignal.timeout(15000)});
   if(!response.ok)return null;
   const bmp=await createImageBitmap(await response.blob(),{colorSpaceConversion:'none'});
   const c=document.createElement('canvas');c.width=256;c.height=256;
@@ -16,45 +32,72 @@ function getTile(key){
  tiles.set(key,task);return task;
 }
 function recomputeDay(){day=Array.from({length:1440},(_,m)=>sunPosition(config.date,m,config.lat,config.lon));frame=daylightFrame(day)}
-function lookup(p,loaded){const a=loaded.get(p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
+function lookup(p,loaded,source){const a=loaded.get(source+'/'+p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
+function stencil(sample,source){
+ return source.smooth?elevationStencil(sample.lat,sample.lon,source.z):[{...tilePixel(sample.lat,sample.lon,source.z),w:1}];
+}
+async function resolveSamples(samples,ground,source,stats){
+ const candidates=samples.filter(p=>p.h==null&&source.groups.includes(p.group)&&p.d>=source.minD);
+ if(!candidates.length&&ground.h!=null)return;
+ if(!candidates.length&&!source.smooth)return;
+ const keys=new Set();
+ for(const p of candidates)for(const q of stencil(p,source))keys.add(source.id+'/'+q.key);
+ if(source.smooth)for(const q of stencil(ground,source))keys.add(source.id+'/'+q.key);
+ const loaded=new Map(),queue=[...keys];let done=0;
+ await Promise.all(Array.from({length:6},async()=>{
+  while(queue.length){const key=queue.pop();loaded.set(key,await getTile(key));done++;
+   $('status').textContent='標高取得 '+source.name+' '+done+'/'+keys.size+' タイル';
+  }
+ }));
+ const read=p=>lookup(p,loaded,source.id);
+ const localGround=source.smooth?interpolatedHeight(stencil(ground,source),read):null;
+ if(ground.h==null&&localGround!=null){ground.h=localGround;ground.source=source.name}
+ let used=0;
+ for(const p of candidates){
+  const h=interpolatedHeight(stencil(p,source),read);
+  if(h==null)continue;
+  // Reduce false nearby walls caused by vertical offsets between DEM sources.
+  const correction=ground.h!=null&&localGround!=null?(ground.h-localGround)*clamp(1-p.d/300,0,1):0;
+  p.h=h+correction;p.source=source.name;used++;
+ }
+ stats[source.name]=(stats[source.name]||0)+used;
+}
 async function compute(){
  $('load').disabled=true;profile=null;coverage=0;tiles.clear();recomputeDay();render();events();
- const keys=new Set(), rays=[];
- const point=tilePixel(config.lat,config.lon,14);keys.add(point.key);
+ const rays=[],samples=[],ground={lat:config.lat,lon:config.lon,h:null};
  for(let i=0;i<N;i++){
   const row=[];
   for(const band of bands){
    const segment=[];
    for(let d=band.start;d<=band.end;d+=band.inc){
-    const p=tilePixel(...destination(config.lat,config.lon,i*step,d),band.z);
-    keys.add(p.key);segment.push({key:p.key,i:p.i,d});
+    const [lat,lon]=destination(config.lat,config.lon,i*step,d);
+    const p={lat,lon,d,group:band.quality,h:null};samples.push(p);segment.push(p);
    }row.push(segment);
   }rays.push(row);
  }
- $('status').textContent='標高タイルを取得中：'+keys.size+'枚';
- const queue=[...keys], loaded=new Map();let done=0;
- await Promise.all(Array.from({length:8},async()=>{
-  while(queue.length){const key=queue.pop();loaded.set(key,await getTile(key));done++;
-   $('status').textContent='標高タイルを取得中 '+done+' / '+keys.size+'枚';
-  }
- }));
- const ground=lookup(point,loaded);
- if(ground==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
- const eye=ground+config.height, out=[[],[],[]], total=[];
+ const stats={};
+ for(const source of sourcePlan)await resolveSamples(samples,ground,source,stats);
+ if(ground.h==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
+ const eye=ground.h+config.height,out=bands.map(()=>[]),total=[];
  let valid=0,count=0;
  for(const ray of rays){
   let max=null;
   ray.forEach((seg,k)=>{
    let best=null;
-   for(const p of seg){count++;const h=lookup(p,loaded);if(h==null)continue;valid++;
-    const a=elevationAngle(h,eye,p.d);if(best==null||a>best)best=a;
+   for(const p of seg){
+    // Do not claim sub-grid detail when only a coarser model is available.
+    if(p.h==null&&p.d<5&&ground.source!=='1m')continue;
+    if(p.h==null&&p.d<10&&seg.some(q=>q.source==='10m'))continue;
+    count++;if(p.h==null)continue;valid++;
+    const a=elevationAngle(p.h,eye,p.d);if(best==null||a>best)best=a;
    }
    out[k].push(best);if(best!=null&&(max==null||best>max))max=best;
   });total.push(max);
  }
- coverage=valid/count;profile={out,total,eye};
- $('status').textContent='観測高 '+eye.toFixed(1)+'m（DEM＋指定高）｜サンプル取得率 '+Math.round(coverage*100)+'%｜'+keys.size+'タイル。'+(coverage<.999?'欠損のため遮蔽判定は暫定。':'70km以遠と植生は未考慮。');
- render();events();
+ coverage=count?valid/count:0;profile={out,total,eye,bounds:terrainBounds(frame,out,step)};
+ const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
+ $('status').textContent='観測高 '+eye.toFixed(1)+'m（'+ground.source+' DEM＋指定高）｜近距離 '+(detail||'取得なし')+'｜サンプル取得率 '+Math.round(coverage*100)+'%｜'+tiles.size+'タイル。'+(coverage<.999?'欠損のため遮蔽判定は暫定。':'70km以遠と植生は未考慮。');
+ tiles.clear();render();events();
 }
 function horizon(a){return profile?horizonAt(profile.total,a,step):null}
 function events(){
@@ -74,9 +117,9 @@ function events(){
  if(!box.children.length)box.textContent='判定できる変化なし（または欠損）。';
 }
 function render(){
- const {center,span,bottom}=frame||daylightFrame(day),left=center-span/2,right=center+span/2;
- let top=(frame||daylightFrame(day)).top;
- if(profile){for(let a=left;a<=right;a+=step){const h=horizon(a);if(h!=null)top=Math.max(top,Math.min(panoramaY(89.8),panoramaY(h)+5));}}
+ const f=frame||daylightFrame(day),{center,span}=f,left=center-span/2,right=center+span/2;
+ let top=f.top,bottom=f.bottom;
+ if(profile){const bounds=profile.bounds;top=Math.max(top,panoramaY(bounds.high));bottom=Math.min(bottom,panoramaY(bounds.low));}
  const plotW=1800,scale=plotW/span,plotH=Math.round((top-bottom)*scale),width=plotW+78,H=plotH+64;
  if(canvas.width!==width)canvas.width=width;if(canvas.height!==H)canvas.height=H;
  const zoom=+$('zoom').value;canvas.style.width=zoom+'%';$('zoomValue').textContent=zoom+'%';
@@ -106,7 +149,7 @@ function render(){
  if($('grid').checked){
   ctx.strokeStyle='#ffffff25';ctx.lineWidth=1;ctx.beginPath();
   for(let a=Math.ceil(left/15)*15;a<=right;a+=15)trace([project(a,panoramaAltitude(bottom)),project(a,panoramaAltitude(top))]);
-  for(let h=-10;h<=80;h+=10){ctx.moveTo(...project(left,h));ctx.lineTo(...project(right,h));}
+  for(let h=Math.ceil(panoramaAltitude(bottom)/10)*10;h<=80;h+=10){ctx.moveTo(...project(left,h));ctx.lineTo(...project(right,h));}
   ctx.stroke();
  }
  function polygon(p){
@@ -129,7 +172,7 @@ function render(){
    run.push([px,py]);
   }flush();
  }
- if(profile){const colors=['#233747','#3f5869','#788b9b'];if($('layers').checked){for(let k=2;k>=0;k--)land(profile.out[k],colors[k])}else land(profile.total,colors[0]);}
+ if(profile){const colors=['#192b38','#29404e','#3b5564','#536d7f','#8497a8'];if($('layers').checked){for(let k=profile.out.length-1;k>=0;k--)land(profile.out[k],colors[k])}else land(profile.total,colors[0]);}
  if($('path').checked){
   // Show the complete swept disk even when it lies behind a ridge; the solid
   // current disk was drawn before terrain and is correctly hidden by it.
