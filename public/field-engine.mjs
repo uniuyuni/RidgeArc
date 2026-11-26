@@ -15,6 +15,8 @@ export function directionComplete(profile,az){
 }
 export function visibility(profile,s){
  if(!profile)return {estimate:null,uncertain:true,missingHorizon:true};
+ const eye=Math.max(0,profile.ground+profile.height),dip=Math.acos(6371000/(6371000+eye))/DEG;
+ if(s.alt+s.radius< -dip)return {estimate:0,lower:0,upper:0,uncertain:false,missingHorizon:false};
  return visibilityEstimate(s,a=>horizon(profile,a),a=>directionComplete(profile,a));
 }
 export function solarAt(date,t,lat,lon){return sunPosition(date,t*60,lat,lon)}
@@ -23,9 +25,6 @@ export function dayAnalysis(profile,date,lat,lon){
   const s=sunPosition(date,m,lat,lon);
   // A body below the astronomical horizon may still be seen from a high
   // viewpoint; only reject below the spherical reference horizon of that eye.
-  const eye=Math.max(0,profile.ground+profile.height);
-  const dip=Math.acos(6371000/(6371000+eye))/DEG;
-  if(s.alt+s.radius< -dip)return {state:0,uncertain:false};
   const v=visibility(profile,s);
   return {state:v.estimate==null?null:v.estimate===0?0:v.estimate===1?2:1,uncertain:v.uncertain};
  };
