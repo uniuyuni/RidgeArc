@@ -83,6 +83,8 @@ Environmentは論理4D気象場、モデル/run/有効時刻/メンバー/鉛直
 - 検証の優先：合成既知解、完全なDEMと独立参照（HORAYZON/GRASS/JPL等）、端末測定、実写の同一座標高さ姿勢画角時刻。現実の誤差と数値誤差を区別。
 
 ## 6. 競合・商業化
+**最新の事業方針（2026-11-27、ユーザー提供のDia対話）**：[第7回記録](technical-design-council-07.md)冒頭「事業目的の再定義」を参照。旅を続けるための収入が必要だが、収益のためにアプリを使い続けさせない。旅・現地検証→制作→他の撮影者の価値→収益・応援→次の旅という循環。基本無料、逆探索無料化を有力候補として再評価、気象は継続価値への有料提供候補。指定撮影日の数日前〜当日の「撮影パス」、別売オフライン/実地撮影地パック、任意応援、将来的な撮影情報共有と投稿者への応援金還元・透明な運営手数料を検討。既存料金は旧仮説、価格・法務・収益性・具体機能未確定。投稿・決済の運営負担を抑えるため段階導入。日照・気象研究を撤回しない。FIELD βの実データ統合・実地検証を優先し、この構想のために実装を止めない。
+
 競合調査の主要比較先TPE Web v4、PlanIt Earth、Inverza、PeakFinder。他にPhotoPills、Sun Surveyor、PlanIt Pro、LightChance/SkyCandy。TPEとPlanItは既に逆算、Inverzaは気象/自然現象統合。独自性や優位は未実証。本人限定試用ではTPE/PlanIt操作が難しい（PlanIt地形有料未試用）、TPEの時間軸とPeakFinderの山名稜線に好感、PeakFinderの3D操作は不評。差別化仮説：シンプル2D直接操作、連続地点移動、精度根拠、G4と長期間G5、風景発見の楽しさ。価格・レビューはcompetitive-research.md時点の限定調査。市場規模、支払意欲、競合の実機比較、商用データ許諾、運用費・価格未決定。
 
 ## 7. 次回以降の議題
@@ -106,6 +108,7 @@ Environmentは論理4D気象場、モデル/run/有効時刻/メンバー/鉛直
 |[technical-design-council-04.md](technical-design-council-04.md)|光学・日照・陰影、合成検証、次工程|
 |[technical-design-council-05.md](technical-design-council-05.md)|気象・自然現象、取得源、公開ゲート、合成検証|
 |[technical-design-council-06.md](technical-design-council-06.md)|UI Lab v0.24、操作仕様、地図追加要件、統合・検証課題|
+|[technical-design-council-07.md](technical-design-council-07.md)|事業目的・料金仮説・撮影パス・還元構想・FIELD β実装開始|
 |[README](../README.md)|プロトタイプ実行・デプロイ|
 
 今後は本書の「現時点の判断」と「次回」を更新し、議事録は追加保存する。全資料スナップショットはこの時点の固定アーカイブであり、将来の最新仕様そのものではない。
