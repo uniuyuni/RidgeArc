@@ -56,3 +56,7 @@
 [Cloudflare Static Assets](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/)・[Workers](https://developers.cloudflare.com/workers/platform/pricing/)・[R2](https://developers.cloudflare.com/r2/pricing/) を候補とし、静的配信と動的処理・保存・オブジェクト操作を区別。データライセンス、上限、予算、キャッシュ、濫用、失敗時の機能縮退を設計する。
 [Open-Meteo](https://open-meteo.com/en/pricing) 無料API非商用、Standard月100万換算calls、Professional500万。商用金額未取得。独自予報許可要否は第5回の公開ゲート維持。課金契約なし。地形・天体の公開を不必要に遅らせない。
 市場規模・検索ボリューム・実CVR・継続率・運用原価・実機比較は未検証。価格、収益、初期製品範囲、販売開始は決定しない。次の工程は競合実機比較と検証可能な初期リリース範囲/技術優先順位の整理。調査は開発を止める障害にしない。
+
+## 実装開始（2026-11-27、ユーザー承認）
+30日の実用検証を優先して、収益化・価格・契約・公開条件の最終決定を待たず、既存本体とUI Labを維持した別ページ FIELD β を作成。https://ridgearc.world/field/ （配信未確認）。public/field/index.html、field-engine.mjs、field-terrain-worker.mjs。既存core.mjsの太陽近似、円盤、地形放射状標高取得・first-hit距離色、接触検出を再利用。0.25°刻み、2m〜70km、既存のGSI 1/5/10m優先取得と遠景低LOD、Workerで標高取得と投影、地点/地上高変更時再計算（同一点高さ変更では標高配列再利用）、日付変更時は選択日のイベントのみ。初期入力は北緯36.70東経137.18、2026-11-30、15:00 JST、方位100°、高さ1.6m。仮座標であり撮影適地の保証なし。日照・気象・山名・月・逆探索・共有・オフライン・課金は未接続。天頂投影は暫定、範囲は水平全周・仰角操作、70km超や欠損は評価範囲外。裸地DEM・近似天体位置・標準大気、短時間再出現検出漏れ、地物未考慮。モードの見た目を本体仕様に混同しない。
+検証：JS構文検査、合成一様8°稜線の4接触と可視区間1件、全方位欠損で昼間未判定、方向不完全で暫定区間、投影中心の数値テストを実行し通過。実地形・ブラウザ動作・DEM取得率・端末速度・配信は未確認。上記合成時刻は立山連峰の予測値ではない。第7回の事業検討は未決定のまま開発と分離する。
