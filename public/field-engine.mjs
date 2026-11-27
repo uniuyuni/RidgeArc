@@ -1,6 +1,7 @@
 import {sunPosition,angleDelta,wrap,panoramaY,panoramaAltitude,horizonAt,visibilityEstimate,diskBoundary,contactEvents,DEG,clamp} from './core.mjs';
 
 import {surfaceAt,blendSurface,surfaceColor} from './coast-surface.mjs';
+import {shadeColor} from './scene-light-engine.mjs';
 
 // Field preview adapter. Real DEM samples and the existing solar model are used;
 // unknown terrain is never converted to a positive visibility assertion.
@@ -45,7 +46,7 @@ export function dayAnalysis(profile,date,lat,lon){
  if(begin<1440)runs.push({start:begin/60,end:24,kind:kind(last)});
  return {runs,contacts:contacts.map(c=>({t:c.minute/60,name:(c.to===0?'完全遮蔽':c.from===0?'出現開始':c.to===2?'全円盤出現':'部分遮蔽')+(c.uncertain?'（暫定）':'')}))};
 }
-export function makeTerrainTexture(profile,view,w,h,distanceColor=true){
+export function makeTerrainTexture(profile,view,w,h,distanceColor=true,shade=null){
  const rw=Math.max(1,Math.min(720,Math.ceil(w))),rh=Math.max(1,Math.min(360,Math.ceil(h)));
  const cvs=document.createElement('canvas');cvs.width=rw;cvs.height=rh;
  const ctx=cvs.getContext('2d'),image=ctx.createImageData(rw,rh),data=image.data,k=w/view.fov;
@@ -63,7 +64,7 @@ export function makeTerrainTexture(profile,view,w,h,distanceColor=true){
    const hit=blendSurface(surfaceAt(profile.surfaces[i],slopes[y],eye),surfaceAt(profile.surfaces[j],slopes[y],eye),f);
    if(!hit&&y+1<=edge)continue;
    // Unknown spans are distinguished from land and water; no invented wall.
-   const color=surfaceColor(hit,distanceColor),q=(y*rw+x)*4;
+   const color=shadeColor(surfaceColor(hit,distanceColor),shade,x,y,rw,rh,hit),q=(y*rw+x)*4;
    data[q]=color[0];data[q+1]=color[1];data[q+2]=color[2];
    data[q+3]=Math.round(255*(hit?.kind==='water'?1:clamp(y+1-edge,0,1)));
   }
