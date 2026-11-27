@@ -24,6 +24,16 @@ test('FIELD worker returns a profile, reuses retained DEM, and rejects missing g
  const second=messages.at(-1);
  assert.equal(second.type,'profile');assert.equal(second.id,2);assert.equal(second.height,3);
  assert.ok(second.total[0]<first.total[0]);assert.equal(requests,count);assert.equal(messages.length,1);
+ // Full 1440-direction receiver path: no surface segment transfer, date-only reuse.
+ const lightRequest=(id,date)=>handleTerrainRequest({data:{id,lat:36.7,lon:137.18,mode:'light',date}});
+ await lightRequest(4,'2026-11-30');
+ const light=messages.at(-1);assert.equal(light.type,'light');
+ assert.equal(light.profile.total.length,1440);assert.equal(light.profile.coverage,1);
+ assert.equal(light.profile.surfaces,undefined);assert.equal(light.profile.normal[2],1);
+ assert.ok(light.analysis.first>390&&light.analysis.first<450);
+ assert.ok(light.analysis.last>960&&light.analysis.last<1020);
+ const lightCount=requests;await lightRequest(5,'2026-12-01');
+ assert.equal(messages.at(-1).date,'2026-12-01');assert.equal(requests,lightCount);
  missing=true;await request(3,43,142,1.6);
  assert.equal(messages.at(-1).type,'error');assert.equal(messages.at(-1).id,3);
  assert.match(messages.at(-1).message,/標高が取得できません/);
