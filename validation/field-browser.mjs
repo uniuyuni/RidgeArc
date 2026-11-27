@@ -56,6 +56,16 @@ try{
  await page.locator('[data-sheet=info]').click();
  await page.waitForFunction(()=>/^裸地DEM /.test(document.querySelector('[data-status]')?.textContent),null,{timeout:30000});
  assert.equal(await page.locator('[data-result]').isVisible(),true);
+ // Exercise coastal viewpoint at rain/sea boundary with actual FIELD UI.
+ await page.locator('#detailReturn').click();
+ await page.locator('#detailPage').waitFor({state:'hidden'});
+ await page.locator('[data-sheet=search]').click();
+ await page.locator('#locLat').fill('36.816525');
+ await page.locator('#locLon').fill('137.0373667');
+ await page.locator('#locGo').click();
+ await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldStatus')?.textContent),null,{timeout:live?180000:90000});
+ assert.ok(await page.locator('#ridgeDepth').isVisible());
+ console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
 }finally{await browser?.close();await new Promise(r=>server.close(r))}
