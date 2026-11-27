@@ -1,4 +1,6 @@
-import {sunPosition,angleDelta,wrap,panoramaY,panoramaAltitude,horizonAt,visibilityEstimate,diskBoundary,surfaceDistance,contactEvents,DEG,clamp} from './core.mjs';
+import {sunPosition,angleDelta,wrap,panoramaY,panoramaAltitude,horizonAt,visibilityEstimate,diskBoundary,contactEvents,DEG,clamp} from './core.mjs';
+
+import {surfaceAt,blendSurface,surfaceColor} from './coast-surface.mjs';
 
 // Field preview adapter. Real DEM samples and the existing solar model are used;
 // unknown terrain is never converted to a positive visibility assertion.
@@ -51,14 +53,19 @@ export function makeTerrainTexture(profile,view,w,h,distanceColor=true){
  const rowY=alt=>h/2+(panoramaY(view.pitch)-panoramaY(alt))*k;
  for(let x=0;x<rw;x++){
   const az=wrap(view.az+((x+.5)*w/rw-w/2)/k),a=az/STEP,i=Math.floor(a),j=(i+1)%profile.total.length,f=a-i,horizonAngle=horizon(profile,az);
-  if(horizonAngle==null)continue;
-  const edge=rowY(horizonAngle)*rh/h;
-  for(let y=Math.max(0,Math.floor(edge));y<rh;y++){
-   let d0=surfaceDistance(profile.surfaces[i],slopes[y]),d1=surfaceDistance(profile.surfaces[j],slopes[y]);
-   if(d0==null&&d1==null)continue;
-   let d=d0==null?d1:d1==null?d0:d0*(1-f)+d1*f;
-   const t=distanceColor?clamp(Math.log1p(d/30)/Math.log1p(70000/30),0,1):.4,q=(y*rw+x)*4;
-   data[q]=Math.round(25+107*t);data[q+1]=Math.round(43+108*t);data[q+2]=Math.round(56+112*t);data[q+3]=Math.round(255*clamp(y+1-edge,0,1));
+  const edge=horizonAngle==null?rh:rowY(horizonAngle)*rh/h;
+  const eye=profile.ground+profile.height;
+  const hasWater=profile.surfaces[i].water?.length||profile.surfaces[j].water?.length;
+  // Water can occupy missing sea-level DEM pixels, but never changes the
+  // analytical terrain horizon. Never paint water in the sky.
+  const waterEdge=hasWater&&eye>0?rowY(-Math.sqrt(2*eye/6371000)/DEG)*rh/h:rh;
+  for(let y=Math.max(0,Math.floor(Math.min(edge,waterEdge)));y<rh;y++){
+   const hit=blendSurface(surfaceAt(profile.surfaces[i],slopes[y],eye),surfaceAt(profile.surfaces[j],slopes[y],eye),f);
+   if(!hit&&y+1<=edge)continue;
+   // Unknown spans are distinguished from land and water; no invented wall.
+   const color=surfaceColor(hit,distanceColor),q=(y*rw+x)*4;
+   data[q]=color[0];data[q+1]=color[1];data[q+2]=color[2];
+   data[q+3]=Math.round(255*(hit?.kind==='water'?1:clamp(y+1-edge,0,1)));
   }
  }
  ctx.putImageData(image,0,0);
