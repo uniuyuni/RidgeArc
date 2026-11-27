@@ -25,7 +25,7 @@ export function direction(az,alt){
  const a=az*DEG,e=alt*DEG,c=Math.cos(e);return [c*Math.sin(a),c*Math.cos(a),Math.sin(e)];
 }
 const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
-export function receiverLight(profile,s,normal=profile.normal){
+export function receiverLight(profile,s,normal=profile.normal,readHorizon=a=>horizonSample(profile,a)){
  const altitude=s.geo??s.alt,az=s.az,radius=s.radius;
  if(![altitude,az,radius].every(Number.isFinite)||radius<=0)throw Error('Invalid solar direction');
  const a=az*DEG,e=altitude*DEG,r=radius*DEG,center=direction(az,altitude);
@@ -43,7 +43,7 @@ export function receiverLight(profile,s,normal=profile.normal){
   return hi>lo?Math.max(0,(hi-lo)*(k+ry*(lo+hi)/2)):0;
  };
  for(const {x,y} of strips){
-  const h=horizonSample(profile,az+x*radius/Math.max(.05,Math.cos(e)));
+  const h=readHorizon(az+x*radius/Math.max(.05,Math.cos(e)));
   const lo=h.angle==null?-y:clamp((h.angle-altitude)/radius,-y,y);
   const area=y-lo,energy=normal?integral(x,lo,y):0;
   vhi+=area;ihi+=energy;
