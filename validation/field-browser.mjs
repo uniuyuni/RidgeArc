@@ -65,7 +65,7 @@ try{
  await page.locator('#locGo').click();
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldStatus')?.textContent),null,{timeout:live?180000:90000});
  assert.ok(await page.locator('#ridgeDepth').isVisible());
- if(!live){
+ {
   await page.locator('[data-sheet=settings]').click();
   const layer=page.locator('[data-layer="日照・陰影"]');
   if(!await layer.isVisible())await page.locator('[data-settings-tab=layers]').click();
@@ -73,8 +73,18 @@ try{
   await layer.check();await page.locator('#close').click();
   await page.waitForFunction(()=>/^日照概算 \d+\//.test(document.querySelector('#sceneStatus')?.textContent),null,{timeout:90000});
   console.log('scene:',await page.locator('#sceneStatus').innerText());
+  if(!live)assert.match(await page.locator('#sceneStatus').innerText(),/日照概算 [1-9]\d*\//);
+  await page.locator('[data-sheet=settings]').click();await layer.uncheck();await page.locator('#close').click();
  }
  console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
+ await page.locator('[data-sheet=search]').click();
+ const align=page.locator('#alignmentSearch');await align.locator('summary').click();
+ await align.locator('[data-az]').fill('120');await align.locator('[data-alt]').fill('3');
+ await align.locator('[data-tolerance]').fill('5');await align.locator('[data-end]').fill('2026-12-01');
+ await align.locator('[data-run]').click();
+ await page.waitForFunction(()=>/件の候補/.test(document.querySelector('#alignmentSearch [data-status]')?.textContent),null,{timeout:30000});
+ const result=align.locator('[data-results] button').first();assert.ok(await result.isVisible());await result.click();
+ assert.equal(await page.locator('#sheet').isHidden(),true);
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
 }finally{await browser?.close();await new Promise(r=>server.close(r))}
