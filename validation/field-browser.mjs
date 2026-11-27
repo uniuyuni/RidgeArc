@@ -65,6 +65,15 @@ try{
  await page.locator('#locGo').click();
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldStatus')?.textContent),null,{timeout:live?180000:90000});
  assert.ok(await page.locator('#ridgeDepth').isVisible());
+ if(!live){
+  await page.locator('[data-sheet=settings]').click();
+  const layer=page.locator('[data-layer="日照・陰影"]');
+  if(!await layer.isVisible())await page.locator('[data-settings-tab=layers]').click();
+  if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();
+  await layer.check();await page.locator('#close').click();
+  await page.waitForFunction(()=>/^日照概算 \d+\//.test(document.querySelector('#sceneStatus')?.textContent),null,{timeout:90000});
+  console.log('scene:',await page.locator('#sceneStatus').innerText());
+ }
  console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
