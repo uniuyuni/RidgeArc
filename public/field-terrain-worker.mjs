@@ -1,5 +1,6 @@
 import {clamp,destination,tilePixel,decodeElevation,elevationStencil,interpolatedHeight,projectTerrainRay} from './core.mjs';
 const step=.25,N=1440;
+const pointKey=({lat,lon})=>[lat,lon].join('/');
 let generation=0;
 const pause=()=>new Promise(r=>setTimeout(r,0));
 const bands=[
@@ -72,10 +73,10 @@ async function resolveSamples(samples,ground,source,stats,isCurrent){
  }
  stats[source.name]=(stats[source.name]||0)+used;
 }
-async function loadTerrain(target,isCurrent){
+async function loadTerrain(target,isCurrent,rayCount=N){
  const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};
  const distances=Float64Array.from(bands.flatMap(b=>Array.from({length:Math.floor((b.end-b.start)/b.inc)+1},(_,i)=>b.start+i*b.inc)));
- for(let i=0;i<N;i++){
+ for(let i=0;i<rayCount;i++){
   const row=[];
   for(const band of bands){
    for(let d=band.start;d<=band.end;d+=band.inc){
@@ -110,12 +111,14 @@ async function project(data,height,id){
  if(id!==generation)return;
  postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,complete:data.complete,surfaces,total:surfaces.map(s=>s.angle),height});
 }
-self.onmessage=async e=>{
+// rayCount is injectable for small offline regression fixtures only.
+export async function handleTerrainRequest(e,rayCount=N){
  const {id,lat,lon,height}=e.data;
  generation=id;
  try{
-  const key=[lat,lon].join('/');
-  if(retained?.key!==key){const data=await loadTerrain({lat,lon},()=>id===generation);if(!data||id!==generation)return;retained=data;}
+  const key=pointKey({lat,lon});
+  if(retained?.key!==key||retained.heights.length!==rayCount){const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);if(!data||id!==generation)return;retained=data;}
   await project(retained,height,id);
  }catch(e){if(id===generation)postMessage({type:'error',id,message:String(e.message||e)});}
-};
+}
+if(typeof self!=='undefined')self.onmessage=e=>handleTerrainRequest(e);
