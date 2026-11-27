@@ -74,7 +74,7 @@ try{
   await page.waitForFunction(()=>/^日照概算 \d+\//.test(document.querySelector('#sceneStatus')?.textContent),null,{timeout:90000});
   console.log('scene:',await page.locator('#sceneStatus').innerText());
   if(!live)assert.match(await page.locator('#sceneStatus').innerText(),/日照概算 [1-9]\d*\//);
-  await page.locator('[data-sheet=settings]').click();await layer.uncheck();await page.locator('#close').click();
+  await page.locator('[data-sheet=settings]').click();if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();await layer.uncheck();await page.locator('#close').click();
  }
  console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
  await page.locator('[data-sheet=search]').click();
