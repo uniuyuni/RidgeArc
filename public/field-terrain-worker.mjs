@@ -1,3 +1,4 @@
+import {getTile} from './terrain-store.mjs';
 import {clamp,destination,tilePixel,decodeElevation,elevationStencil,interpolatedHeight,projectTerrainRay} from './core.mjs';
 import {isWaterPixel,waterRanges} from './coast-surface.mjs';
 import {receiverHorizon,normalFromSamples,lightDay} from './light-engine.mjs';
@@ -21,28 +22,6 @@ const sourcePlan=[
  {id:'dem_png',name:'中景',z:13,groups:['mid'],smooth:false,minD:0},
  {id:'dem_png',name:'遠景',z:10,groups:['far'],smooth:false,minD:0}
 ];
-const tiles=new Map(),MAX_TILES=256;
-function getTile(key){
- if(tiles.has(key)){
-  const entry=tiles.get(key);
-  if(!entry.retryAt||Date.now()<entry.retryAt){tiles.delete(key);tiles.set(key,entry);return entry.task;}
-  tiles.delete(key);
- }
- const task=(async()=>{
-  const response=await fetch('https://cyberjapandata.gsi.go.jp/xyz/'+key+'.png',{signal:AbortSignal.timeout(15000)});
-  if(response.status===404)return null;
-  if(!response.ok)throw Error('HTTP '+response.status);
-  const bmp=await createImageBitmap(await response.blob(),{colorSpaceConversion:'none'});
-  const c=new OffscreenCanvas(256,256);
-  const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(bmp,0,0);bmp.close();
-  return g.getImageData(0,0,256,256).data;
- })();
- const entry={task:null,retryAt:0};
- entry.task=task.then(data=>{if(data==null)entry.retryAt=Date.now()+300000;return data;}).catch(()=>{if(tiles.get(key)===entry)tiles.delete(key);return null;});
- tiles.set(key,entry);
- while(tiles.size>MAX_TILES)tiles.delete(tiles.keys().next().value);
- return entry.task;
-}
 
 function lookup(p,loaded,source){const a=loaded.get(source+'/'+p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
 function stencil(sample,source){
