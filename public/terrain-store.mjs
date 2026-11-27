@@ -23,15 +23,15 @@ export function getTile(key){
 }
 
 // Bounded tile requests, batch by source and tile. No missing sample is zero-filled.
-export async function sampleElevationBatch(points,{isCurrent=()=>true,onProgress=()=>{},fetchTile=getTile}={}){
+export async function sampleElevationBatch(points,{isCurrent=()=>true,onProgress=()=>{},fetchTile=getTile,strictNear=false}={}){
  const values=new Float64Array(points.length);values.fill(NaN);
  const plans=[
   {id:'dem5a_png',z:15,accept:p=>p.detail==='near'},
   {id:'dem5b_png',z:15,accept:p=>p.detail==='near'},
   {id:'dem5c_png',z:15,accept:p=>p.detail==='near'},
   {id:'dem_png',z:14,accept:p=>p.detail==='near'},
-  {id:'dem_png',z:12,accept:p=>p.detail==='mid'||p.detail==='near'},
-  {id:'dem_png',z:10,accept:()=>true}
+  {id:'dem_png',z:12,accept:p=>p.detail==='mid'||(!strictNear&&p.detail==='near')},
+  {id:'dem_png',z:10,accept:p=>!strictNear||p.detail!=='near'}
  ];
  for(const plan of plans){
   if(!isCurrent())return null;
