@@ -1,4 +1,5 @@
 import {clamp,destination,tilePixel,decodeElevation,elevationStencil,interpolatedHeight,projectTerrainRay} from './core.mjs';
+import {receiverHorizon,normalFromSamples,lightDay} from './light-engine.mjs';
 const step=.25,N=1440;
 const pointKey=({lat,lon})=>[lat,lon].join('/');
 let generation=0;
@@ -101,7 +102,30 @@ async function loadTerrain(target,isCurrent,rayCount=N){
  return {key:pointKey(target),distances,heights,complete,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0};
 }
 
-let retained=null;
+let retained=null,lightRetained=null;
+async function makeLightProfile(data,id){
+ const total=[];
+ for(let i=0;i<data.heights.length;i++){
+  total.push(receiverHorizon(data.distances,data.heights[i],data.ground));
+  if(i%120===119){await pause();if(id!==generation)return null;}
+ }
+ const k=data.distances.indexOf(20),at=i=>data.heights[i]?.[k];
+ const normal=normalFromSamples(at(360),at(1080),at(0),at(720),20);
+ return {key:data.key,step,total,complete:data.complete,normal,ground:data.ground,
+  source:data.source,coverage:data.coverage,rangeM:70000,normalBaselineM:40};
+}
+async function handleLight({id,lat,lon,date},rayCount){
+ const key=pointKey({lat,lon});
+ if(lightRetained?.key!==key||lightRetained.total.length!==rayCount){
+  const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);
+  if(!data||id!==generation)return;
+  const p=await makeLightProfile(data,id);
+  if(!p||id!==generation)return;
+  lightRetained=p;
+ }
+ const analysis=lightDay(lightRetained,date,lat,lon);
+ if(id===generation)postMessage({type:'light',id,profile:lightRetained,analysis,date});
+}
 async function project(data,height,id){
  const surfaces=[];
  for(let i=0;i<data.heights.length;i++){
@@ -113,9 +137,10 @@ async function project(data,height,id){
 }
 // rayCount is injectable for small offline regression fixtures only.
 export async function handleTerrainRequest(e,rayCount=N){
- const {id,lat,lon,height}=e.data;
+ const {id,lat,lon,height,mode}=e.data;
  generation=id;
  try{
+  if(mode==='light'){await handleLight(e.data,rayCount);return;}
   const key=pointKey({lat,lon});
   if(retained?.key!==key||retained.heights.length!==rayCount){const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);if(!data||id!==generation)return;retained=data;}
   await project(retained,height,id);
