@@ -1,4 +1,5 @@
 import {clamp,destination,tilePixel,decodeElevation,elevationStencil,interpolatedHeight,projectTerrainRay} from './core.mjs';
+import {isWaterPixel,waterRanges} from './coast-surface.mjs';
 import {receiverHorizon,normalFromSamples,lightDay} from './light-engine.mjs';
 const step=.25,N=1440;
 const pointKey=({lat,lon})=>[lat,lon].join('/');
@@ -74,7 +75,27 @@ async function resolveSamples(samples,ground,source,stats,isCurrent){
  }
  stats[source.name]=(stats[source.name]||0)+used;
 }
-async function loadTerrain(target,isCurrent,rayCount=N){
+// Near sea-level observer only; map colour is a display hint, not DEM.
+async function resolveWater(rays,ground,distances,isCurrent){
+ const empty=()=>rays.map(()=>[]);
+ if(ground.h>10||ground.h< -5)return empty();
+ const candidates=[];
+ for(const row of rays)for(const p of row)if(p.d<=8000&&(p.h==null||Math.abs(p.h)<=.25))candidates.push(p);
+ const keys=[...new Set(candidates.map(p=>'pale/'+tilePixel(p.lat,p.lon,14).key))],loaded=new Map();
+ let done=0;await Promise.all(Array.from({length:6},async()=>{
+  while(keys.length&&isCurrent()){
+   const key=keys.pop();loaded.set(key,await getTile(key));done++;
+   if(isCurrent())postMessage({type:'progress',id:generation,message:'水面表示用の地図 '+done+' タイル'});
+  }
+ }));
+ if(!isCurrent())return empty();
+ for(const p of candidates){
+  const q=tilePixel(p.lat,p.lon,14);
+  p.water=isWaterPixel(loaded.get('pale/'+q.key),q.i);
+ }
+ return rays.map(row=>waterRanges(distances,row.map(p=>p.water===true)));
+}
+async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
  const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};
  const distances=Float64Array.from(bands.flatMap(b=>Array.from({length:Math.floor((b.end-b.start)/b.inc)+1},(_,i)=>b.start+i*b.inc)));
  for(let i=0;i<rayCount;i++){
@@ -91,6 +112,8 @@ async function loadTerrain(target,isCurrent,rayCount=N){
  for(const source of sourcePlan){if(!isCurrent())return null;await resolveSamples(samples,ground,source,stats,isCurrent);}
  if(!isCurrent())return null;
  if(ground.h==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
+ const water=includeWater?await resolveWater(rays,ground,distances,isCurrent):null;
+ if(!isCurrent())return null;
  const heights=[],complete=[];let valid=0,count=0;
  for(const row of rays){
   let rv=0,rc=0;
@@ -99,7 +122,7 @@ async function loadTerrain(target,isCurrent,rayCount=N){
   complete.push(rc>0&&rv===rc);
  }
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
- return {key:pointKey(target),distances,heights,complete,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0};
+ return {key:pointKey(target),distances,heights,complete,water,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0};
 }
 
 let retained=null,lightRetained=null;
@@ -117,7 +140,7 @@ async function makeLightProfile(data,id){
 async function handleLight({id,lat,lon,date},rayCount){
  const key=pointKey({lat,lon});
  if(lightRetained?.key!==key||lightRetained.total.length!==rayCount){
-  const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);
+  const data=await loadTerrain({lat,lon},()=>id===generation,rayCount,false);
   if(!data||id!==generation)return;
   const p=await makeLightProfile(data,id);
   if(!p||id!==generation)return;
@@ -129,11 +152,15 @@ async function handleLight({id,lat,lon,date},rayCount){
 async function project(data,height,id){
  const surfaces=[];
  for(let i=0;i<data.heights.length;i++){
-  surfaces.push(projectTerrainRay(data.distances,data.heights[i],data.ground,height));
+  const s=projectTerrainRay(data.distances,data.heights[i],data.ground,height,true);
+  const peak=s.segments.at(-1);
+  s.water=data.water?.[i]??[];
+  s.peak=peak?{distance:peak.d,altitude:s.angle,elevation:data.heights[i][data.distances.indexOf(peak.d)]}:null;
+  surfaces.push(s);
   if(i%120===119){await pause();if(id!==generation)return;}
  }
  if(id!==generation)return;
- postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,complete:data.complete,surfaces,total:surfaces.map(s=>s.angle),height});
+ postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,complete:data.complete,waterDirections:surfaces.filter(s=>s.water.length).length,surfaces,total:surfaces.map(s=>s.angle),height});
 }
 // rayCount is injectable for small offline regression fixtures only.
 export async function handleTerrainRequest(e,rayCount=N){
