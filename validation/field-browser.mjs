@@ -1,0 +1,61 @@
+import {createServer} from 'node:http';
+import {readFile} from 'node:fs/promises';
+import {resolve,extname,sep} from 'node:path';
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import {PNG} from 'pngjs';
+const live=process.argv.includes('--live');
+const root=resolve('public');
+const server=createServer(async(req,res)=>{
+ try{
+  let p=resolve(root,'.'+new URL(req.url,'http://localhost').pathname);
+  if(p!==root&&!p.startsWith(root+sep)){res.writeHead(403).end();return;}
+  if(p.endsWith(sep)||!extname(p))p=resolve(p,'index.html');
+  const b=await readFile(p);
+  res.setHeader('Content-Type',extname(p)==='.mjs'?'text/javascript':extname(p)==='.html'?'text/html; charset=utf-8':'application/octet-stream');res.end(b);
+ }catch{res.writeHead(404).end()}
+});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));
+let browser;
+try{
+ browser=await chromium.launch({channel:'chrome',headless:true,args:['--no-sandbox']});
+ const context=await browser.newContext({viewport:{width:1280,height:900}});
+ const pixels=new PNG({width:256,height:256});
+ for(let i=0;i<pixels.data.length;i+=4){pixels.data[i+2]=100;pixels.data[i+3]=255;}
+ const tile=PNG.sync.write(pixels);
+ await context.route('https://unpkg.com/leaflet@1.9.4/dist/**',async route=>{
+  const name=new URL(route.request().url()).pathname.split('/dist/')[1];
+  try{await route.fulfill({path:resolve('node_modules/leaflet/dist',name)});}catch{await route.abort()}
+ });
+ await context.route('https://cyberjapandata.gsi.go.jp/xyz/**',async route=>{
+  if(live&&!route.request().url().includes('/std/'))return route.continue();
+  await route.fulfill({status:200,contentType:'image/png',headers:{'access-control-allow-origin':'*'},body:tile});
+ });
+ const page=await context.newPage(),errors=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ const start=Date.now();
+ await page.goto('http://127.0.0.1:'+server.address().port+'/field/');
+ await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldStatus')?.textContent),null,{timeout:live?180000:90000});
+ console.log('observer:',await page.locator('#fieldStatus').innerText(),Date.now()-start+'ms');
+ await page.locator('[data-sheet=info]').click();
+ await page.locator('[data-preset]').click();
+ await page.waitForFunction(()=>/^裸地DEM /.test(document.querySelector('[data-status]')?.textContent),null,{timeout:live?180000:90000});
+ assert.equal(await page.locator('[data-result]').isVisible(),true);
+ const values=await page.locator('[data-values]').innerText();
+ assert.ok(values.includes('相対直射光量')&&values.includes('最後の日照'));
+ assert.ok(await page.locator('[data-bar] span').count()>0);
+ if(live){
+  const h=Number(values.match(/対象標高\s*([\d.]+) m/)?.[1]);
+  assert.ok(h>2500&&h<3300,'unexpected Oyama ground: '+h);
+ }else{assert.ok(values.includes('1.0 m'))}
+ console.log('subject:',await page.locator('[data-status]').innerText(),'\n'+values);
+ await page.locator('#detailReturn').click();
+ await page.locator('#detailPage').waitFor({state:'hidden'});
+ await page.locator('#date').fill('2026-12-01');
+ await page.locator('#date').dispatchEvent('change');
+ await page.locator('[data-sheet=info]').click();
+ await page.waitForFunction(()=>/^裸地DEM /.test(document.querySelector('[data-status]')?.textContent),null,{timeout:30000});
+ assert.equal(await page.locator('[data-result]').isVisible(),true);
+ assert.deepEqual(errors,[]);
+ console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
+}finally{await browser?.close();await new Promise(r=>server.close(r))}
