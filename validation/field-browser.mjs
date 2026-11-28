@@ -63,9 +63,19 @@ try{
     const hits=surface.segments.filter(s=>s.d>450&&s.d<650);
     if(hits.length||az%1===0)rows.push({az,peak:surface.peak,hits,probe:[-.3,0,.3,.6,1,1.5,2].map(a=>({a,hit:surfaceAt(surface,Math.tan(a*Math.PI/180),p.ground+p.height)}))});
    }
-   return {ground:p.ground,height:p.height,rows};
+   const {makeTerrainTexture,project}=await import('/field-engine.mjs');
+   const {surfaceColor}=await import('/coast-surface.mjs');
+   const view={az:113.5,pitch:.3,fov:20},w=400,h=200;
+   const canvas=makeTerrainTexture(p,view,w,h,true);
+   const [x,y]=project(113.5,.5,view,w,h);
+   const actual=[...canvas.getContext('2d').getImageData(Math.floor(x),Math.floor(y),1,1).data];
+   const expected=surfaceColor({kind:'land',distance:550},true);
+   const error=actual.slice(0,3).reduce((sum,v,i)=>sum+Math.abs(v-expected[i]),0);
+   return {ground:p.ground,height:p.height,rows,render:{actual,expected,error}};
   });
   console.log('ISLAND FIELD',JSON.stringify(debug));
+  assert.ok(debug?.rows.some(r=>Math.abs(r.az-113.5)<=.25&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600)),'real Onna-iwa must retain elevated foreground surface');
+  assert.ok(debug.render.actual[3]>200&&debug.render.error<20,'rendered island must use foreground terrain material rather than distant mountains');
  }
 
  assert.match(initialSubject,/^裸地DEM /,'initial island ground must resolve');
@@ -193,7 +203,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.7\.1/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.7\.2/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
