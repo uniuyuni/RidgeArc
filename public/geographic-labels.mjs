@@ -34,7 +34,7 @@ export function layoutPeakLabels(peaks,project,w,h,measure){
  const sorted=[...peaks].sort((a,b)=>b.alt-a.alt||a.distance-b.distance);
  for(const p of sorted){
   const [x,y]=project(p.az,p.alt);if(x<4||x>w-4||y<20||y>h-28)continue;
-  const label=p.name+' '+p.height+'m',distance=(p.distance/1000).toFixed(1)+'km',width=Math.max(measure(label),measure(distance))+8;
+  const label=p.name+' '+p.height+'m',distance=(p.distance/1000).toFixed(1)+'km',width=Math.max(measure(label),measure(distance+' · 概算'))+8;
   for(const side of [1,-1]){
    const dy=Math.min(66,Math.max(28,y-28)),dx=side*dy/Math.tan(Math.PI/3),tx=side===1?x+dx+3:x+dx-3-width,ty=y-dy,box={x:tx,y:ty-12,w:width,h:27};
    if(box.x<3||box.x+box.w>w-3||box.y<24||occupied.some(o=>o.x<box.x+box.w&&o.x+o.w>box.x&&o.y<box.y+box.h&&o.y+o.h>box.y))continue;
