@@ -1,25 +1,44 @@
 import {tilePixel,elevationStencil,interpolatedHeight,decodeElevation} from './core.mjs';
 const tiles=new Map(),MAX_TILES=256;
-export function getTile(key){
- if(tiles.has(key)){
-  const entry=tiles.get(key);
-  if(!entry.retryAt||Date.now()<entry.retryAt){tiles.delete(key);tiles.set(key,entry);return entry.task;}
-  tiles.delete(key);
+// Bounded automatic retry; a missing GSI tile is a source fallback, not a network error.
+export async function fetchWithRetry(url,{fetcher=fetch,wait=ms=>new Promise(r=>setTimeout(r,ms)),onRetry=()=>{},timeout=15000,delays=[1000,3000,10000]}={}){
+ for(let attempt=0;;attempt++){
+  let response,delay=delays[attempt];
+  try{
+   response=await fetcher(url,{signal:AbortSignal.timeout(timeout)});
+   if(response.ok||response.status===404)return response;
+   if(![408,425,429,500,502,503,504].includes(response.status)){const e=Error('HTTP '+response.status);e.permanent=true;throw e}
+   const header=response.headers.get('Retry-After');
+   if(header!==null){const parsed=/^\d+$/.test(header)?Number(header)*1000:Date.parse(header)-Date.now();if(Number.isFinite(parsed))delay=Math.max(delay??0,parsed)}
+   throw Error('HTTP '+response.status);
+  }catch(e){
+   if(e.permanent||attempt>=delays.length||delay>60000)throw e;
+   onRetry({attempt:attempt+1,max:delays.length,delay,message:e.message});
+   await wait(delay);
+  }
  }
+}
+export function getTile(key,{onRetry=()=>{},onFailure=()=>{}}={}){
+ let entry=tiles.get(key);
+ if(entry&&entry.retryAt&&Date.now()>=entry.retryAt){tiles.delete(key);entry=null}
+ if(entry){
+  tiles.delete(key);tiles.set(key,entry);
+  if(entry.pending){entry.listeners.add(onRetry);return entry.task.then(v=>{if(entry.failed)onFailure();return v}).finally(()=>entry.listeners.delete(onRetry))}
+  return entry.task;
+ }
+ entry={task:null,retryAt:0,pending:true,failed:false,listeners:new Set([onRetry])};
  const task=(async()=>{
-  const response=await fetch('https://cyberjapandata.gsi.go.jp/xyz/'+key+'.png',{signal:AbortSignal.timeout(15000)});
+  const response=await fetchWithRetry('https://cyberjapandata.gsi.go.jp/xyz/'+key+'.png',{onRetry:event=>{for(const cb of entry.listeners)cb(event)}});
   if(response.status===404)return null;
-  if(!response.ok)throw Error('HTTP '+response.status);
   const bmp=await createImageBitmap(await response.blob(),{colorSpaceConversion:'none'});
   const c=new OffscreenCanvas(256,256);
   const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(bmp,0,0);bmp.close();
   return g.getImageData(0,0,256,256).data;
  })();
- const entry={task:null,retryAt:0};
- entry.task=task.then(data=>{if(data==null)entry.retryAt=Date.now()+300000;return data;}).catch(()=>{if(tiles.get(key)===entry)tiles.delete(key);return null;});
+ entry.task=task.then(data=>{if(data==null)entry.retryAt=Date.now()+300000;return data;}).catch(()=>{entry.failed=true;if(tiles.get(key)===entry)tiles.delete(key);return null;}).finally(()=>{entry.pending=false;entry.listeners.clear()});
  tiles.set(key,entry);
- while(tiles.size>MAX_TILES)tiles.delete(tiles.keys().next().value);
- return entry.task;
+ while(tiles.size>MAX_TILES){const victim=[...tiles].find(([,v])=>!v.pending);if(!victim)break;tiles.delete(victim[0])}
+ return entry.task.then(v=>{if(entry.failed)onFailure();return v});
 }
 
 // Bounded tile requests, batch by source and tile. No missing sample is zero-filled.

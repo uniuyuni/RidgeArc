@@ -27,7 +27,7 @@ function lookup(p,loaded,source){const a=loaded.get(source+'/'+p.key);return a?d
 function stencil(sample,source){
  return source.smooth?elevationStencil(sample.lat,sample.lon,source.z):[{...tilePixel(sample.lat,sample.lon,source.z),w:1}];
 }
-async function resolveSamples(samples,ground,source,stats,isCurrent){
+async function resolveSamples(samples,ground,source,stats,isCurrent,requests){
  const candidates=samples.filter(p=>p.h==null&&source.groups.includes(p.group)&&p.d>=source.minD);
  if(!candidates.length&&ground.h!=null)return;
  if(!candidates.length&&!source.smooth)return;
@@ -36,8 +36,8 @@ async function resolveSamples(samples,ground,source,stats,isCurrent){
  if(source.smooth)for(const q of stencil(ground,source))keys.add(source.id+'/'+q.key);
  const loaded=new Map(),queue=[...keys];let done=0;
  await Promise.all(Array.from({length:6},async()=>{
-  while(queue.length&&isCurrent()){const key=queue.pop();loaded.set(key,await getTile(key));done++;
-   if(isCurrent())postMessage({type:'progress',id:generation,message:'標高取得 '+source.name+' '+done+'/'+keys.size+' タイル'});
+  while(queue.length&&isCurrent()){const key=queue.pop();loaded.set(key,await getTile(key,requests));done++;
+   if(isCurrent())postMessage({type:'progress',id:generation,message:'標高取得 '+source.name+' '+done+'/'+keys.size+' タイル',done,total:keys.size});
   }
  }));
  if(!isCurrent())return;
@@ -55,16 +55,16 @@ async function resolveSamples(samples,ground,source,stats,isCurrent){
  stats[source.name]=(stats[source.name]||0)+used;
 }
 // Near sea-level observer only; map colour is a display hint, not DEM.
-async function resolveWater(rays,ground,distances,isCurrent){
+async function resolveWater(rays,ground,distances,isCurrent,requests){
  const empty=()=>rays.map(()=>[]);
  if(ground.h>10||ground.h< -5)return empty();
  const candidates=[];
  for(const row of rays)for(const p of row)if(p.d<=8000&&(p.h==null||Math.abs(p.h)<=.25))candidates.push(p);
- const keys=[...new Set(candidates.map(p=>'pale/'+tilePixel(p.lat,p.lon,14).key))],loaded=new Map();
+ const keys=[...new Set(candidates.map(p=>'pale/'+tilePixel(p.lat,p.lon,14).key))],loaded=new Map(),total=keys.length;
  let done=0;await Promise.all(Array.from({length:6},async()=>{
   while(keys.length&&isCurrent()){
-   const key=keys.pop();loaded.set(key,await getTile(key));done++;
-   if(isCurrent())postMessage({type:'progress',id:generation,message:'水面表示用の地図 '+done+' タイル'});
+   const key=keys.pop();loaded.set(key,await getTile(key,requests));done++;
+   if(isCurrent())postMessage({type:'progress',id:generation,message:'水面表示用の地図 '+done+'/'+total+' タイル',done,total});
   }
  }));
  if(!isCurrent())return empty();
@@ -75,7 +75,7 @@ async function resolveWater(rays,ground,distances,isCurrent){
  return rays.map(row=>waterRanges(distances,row.map(p=>p.water===true)));
 }
 async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
- const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};
+ const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};let failedTiles=0;const requests={onFailure:()=>{failedTiles++},onRetry:e=>{if(isCurrent())postMessage({type:'progress',id:generation,phase:'retry',message:'通信不安定・再試行 '+e.attempt+'/'+e.max,attempt:e.attempt,max:e.max})}};
  const distances=Float64Array.from(bands.flatMap(b=>Array.from({length:Math.floor((b.end-b.start)/b.inc)+1},(_,i)=>b.start+i*b.inc)));
  for(let i=0;i<rayCount;i++){
   const row=[];
@@ -88,10 +88,10 @@ async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
   if(i%120===119){await new Promise(r=>setTimeout(r,0));if(!isCurrent())return null;}
  }
  const stats={};
- for(const source of sourcePlan){if(!isCurrent())return null;await resolveSamples(samples,ground,source,stats,isCurrent);}
+ for(const source of sourcePlan){if(!isCurrent())return null;await resolveSamples(samples,ground,source,stats,isCurrent,requests);}
  if(!isCurrent())return null;
  if(ground.h==null)throw Error('観測地点の標高が取得できません。座標または通信を確認してください。');
- const water=includeWater?await resolveWater(rays,ground,distances,isCurrent):null;
+ const water=includeWater?await resolveWater(rays,ground,distances,isCurrent,requests):null;
  if(!isCurrent())return null;
  const heights=[],complete=[];let valid=0,count=0;
  for(const row of rays){
@@ -101,7 +101,7 @@ async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
   complete.push(rc>0&&rv===rc);
  }
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
- return {key:pointKey(target),distances,heights,complete,water,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0};
+ return {key:pointKey(target),distances,heights,complete,water,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0,failedTiles};
 }
 
 let retained=null,lightRetained=null;
@@ -114,11 +114,11 @@ async function makeLightProfile(data,id){
  const k=data.distances.indexOf(20),at=i=>data.heights[i]?.[k];
  const normal=normalFromSamples(at(360),at(1080),at(0),at(720),20);
  return {key:data.key,step,total,complete:data.complete,normal,ground:data.ground,
-  source:data.source,coverage:data.coverage,rangeM:70000,normalBaselineM:40};
+  source:data.source,coverage:data.coverage,failedTiles:data.failedTiles??0,rangeM:70000,normalBaselineM:40};
 }
-async function handleLight({id,lat,lon,date},rayCount){
+async function handleLight({id,lat,lon,date,force},rayCount){
  const key=pointKey({lat,lon});
- if(lightRetained?.key!==key||lightRetained.total.length!==rayCount){
+ if(force||lightRetained?.key!==key||lightRetained.total.length!==rayCount){
   const data=await loadTerrain({lat,lon},()=>id===generation,rayCount,false);
   if(!data||id!==generation)return;
   const p=await makeLightProfile(data,id);
@@ -139,17 +139,18 @@ async function project(data,height,id){
   if(i%120===119){await pause();if(id!==generation)return;}
  }
  if(id!==generation)return;
- postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,complete:data.complete,waterDirections:surfaces.filter(s=>s.water.length).length,surfaces,total:surfaces.map(s=>s.angle),height});
+ postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,failedTiles:data.failedTiles??0,complete:data.complete,waterDirections:surfaces.filter(s=>s.water.length).length,surfaces,total:surfaces.map(s=>s.angle),height});
 }
 // rayCount is injectable for small offline regression fixtures only.
 export async function handleTerrainRequest(e,rayCount=N){
- const {id,lat,lon,height,mode}=e.data;
- generation=id;
+ const {id,lat,lon,height,mode,force,cancel}=e.data;
+ generation=id;if(cancel)return;
  try{
   if(mode==='light'){await handleLight(e.data,rayCount);return;}
   const key=pointKey({lat,lon});
-  if(retained?.key!==key||retained.heights.length!==rayCount){const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);if(!data||id!==generation)return;retained=data;}
-  await project(retained,height,id);
+  if(force||retained?.key!==key||retained.heights.length!==rayCount){const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);if(!data||id!==generation)return;retained=data;}
+  if(id===generation)postMessage({type:'progress',id,message:'稜線を計算中'});
+ await project(retained,height,id);
  }catch(e){if(id===generation)postMessage({type:'error',id,message:String(e.message||e)});}
 }
 if(typeof self!=='undefined')self.onmessage=e=>handleTerrainRequest(e);
