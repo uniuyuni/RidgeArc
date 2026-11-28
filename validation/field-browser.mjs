@@ -80,6 +80,41 @@ try{
   await page.locator('[data-sheet=settings]').click();if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();await layer.uncheck();await page.locator('#close').click();
  }
  console.log('coastal:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),await page.locator('#ridgeDepth').innerText());
+ // Check independent option controls and actual rendered halo pixels.
+ await page.locator('[data-sheet=settings]').click();
+ if(!await page.locator('[data-sun-option="glow"]').isVisible())await page.locator('[data-settings-tab=general]').click();
+ assert.equal(await page.locator('[data-sun-option="minimum"]').isChecked(),true);
+ assert.equal(await page.locator('[data-sun-option="glow"]').isChecked(),true);
+ assert.equal(await page.locator('[data-sun-option="marker"]').isChecked(),false);
+ await page.locator('[data-sun-option="marker"]').check();
+ assert.equal(await page.locator('[data-sun-option="minimum"]').isChecked(),true);
+ assert.equal(await page.locator('[data-sun-option="glow"]').isChecked(),true);
+ await page.locator('[data-sun-option="marker"]').uncheck();
+ await page.locator('#close').click();
+ const glow=await page.evaluate(async()=>{
+  const {drawSolarGlow}=await import('/solar-display.mjs');
+  const canvas=document.createElement('canvas');canvas.width=canvas.height=80;
+  const ctx=canvas.getContext('2d'),values=[];
+  for(const color of ['#627e94','#b4c5cc','#293d55']){
+   ctx.fillStyle=color;ctx.fillRect(0,0,80,80);
+   const before=[...ctx.getImageData(50,40,1,1).data];
+   drawSolarGlow(ctx,40,40,3);
+   const after=[...ctx.getImageData(50,40,1,1).data];
+   values.push(after.slice(0,3).reduce((n,v,i)=>n+Math.abs(v-before[i]),0));
+  }
+  return values;
+ });
+ assert.ok(glow.every(v=>v>25),'visible halo outside locator radius on all sky backgrounds');
+ // Actual loupe opens with the same real solar position used for target selection.
+ const currentRidge=page.locator('#ridge'),currentRect=await currentRidge.boundingBox();
+ // Directly selecting a known trajectory point avoids changing the camera.
+ const morning=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');const sun=solarAt('2026-12-01',8,36.816525,137.0373667);return project(sun.az,sun.alt,{az:100,pitch:8,fov:95},w,h)},{w:currentRect.width,h:currentRect.height});
+ await currentRidge.click({position:{x:morning[0],y:morning[1]}});
+ await currentRidge.dblclick({position:{x:morning[0],y:morning[1]}});
+ await page.locator('#solarLoupe').waitFor({state:'visible',timeout:5000});
+ assert.match(await page.locator('#loupeTitle').innerText(),/4°/);
+ await page.locator('#closeLoupe').click();
+
  // Verify the approved timeline workflow using a real solar direction.
  const lock=page.locator('.subjectLockButton');
  // Receiver preset has already selected and locked Oyama.
@@ -124,7 +159,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.6\.2/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.7/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
