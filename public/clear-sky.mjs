@@ -55,16 +55,17 @@ export function lightDirection(observer,subject,sun){
 export function twilight(sunAltitude){
  return sunAltitude>=0?'昼間':sunAltitude>=-6?'市民薄明':sunAltitude>=-12?'航海薄明':sunAltitude>=-18?'天文薄明':'夜間';
 }
-let cached=null;
+const skyCache=new Map();
 export function drawClearSky(ctx,w,h,view,sun,height){
  const cols=Math.min(64,Math.max(16,Math.ceil(w/24))),rows=Math.min(40,Math.max(12,Math.ceil(h/24))),key=[cols,rows,w/h,view.az,view.pitch,view.fov,sun.az,sun.geo,height].join('/');
- if(cached?.key!==key){
+ let cached=skyCache.get(key);
+ if(!cached){
   const canvas=document.createElement('canvas');canvas.width=cols;canvas.height=rows;const c=canvas.getContext('2d'),im=c.createImageData(cols,rows);
   for(let y=0;y<rows;y++)for(let x=0;x<cols;x++){
    const az=view.az+((x+.5)/cols-.5)*view.fov,alt=panoramaAltitude(panoramaY(view.pitch)+(.5-(y+.5)/rows)*h/w*view.fov);
    const rgb=skyRGB({az,alt,sunAz:sun.az,sunAlt:sun.geo,height:Math.max(0,height||0)});im.data.set([...rgb,255],(y*cols+x)*4);
   }
-  c.putImageData(im,0,0);cached={key,canvas};
+  c.putImageData(im,0,0);cached={canvas};skyCache.set(key,cached);if(skyCache.size>2)skyCache.delete(skyCache.keys().next().value);
  }
  ctx.save();ctx.imageSmoothingEnabled=true;ctx.drawImage(cached.canvas,0,0,w,h);ctx.restore();
 }
