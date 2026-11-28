@@ -141,6 +141,22 @@ try{
  assert.equal(await page.locator('[data-sun-option="minimum"]').isChecked(),true);
  assert.equal(await page.locator('[data-sun-option="glow"]').isChecked(),true);
  assert.equal(await page.locator('[data-sun-option="marker"]').isChecked(),false);
+ // Verify the actual red wordmark, not merely the outlined class.
+ await page.locator('[data-settings-tab=layers]').click();
+ const outline=page.locator('[data-layer="稜線輪郭"]'),word=page.locator('#ridgeWord');
+ if(!await outline.isVisible())await page.locator('details').filter({has:outline}).locator('summary').click();
+ await outline.uncheck();
+ const countRed=async()=>{const png=PNG.sync.read(await word.screenshot());let n=0;for(let i=0;i<png.data.length;i+=4){const [r,g,b]=png.data.subarray(i,i+3);if(r>150&&r-g>45&&r-b>35)n++}return n};
+ const off=await countRed();
+ await outline.check();
+ assert.equal(await word.evaluate(e=>getComputedStyle(e).webkitTextStrokeWidth),'2px');
+ const on=await countRed();
+ console.log('Ridge outline pixels:',{off,on});
+ assert.ok(on>30&&on>off+30,'red outline must be visibly rendered');
+ await outline.uncheck();
+ assert.equal(await countRed(),off);
+ await page.locator('[data-settings-tab=general]').click();
+
  await page.locator('[data-sun-option="marker"]').check();
  assert.equal(await page.locator('[data-sun-option="minimum"]').isChecked(),true);
  assert.equal(await page.locator('[data-sun-option="glow"]').isChecked(),true);
@@ -241,7 +257,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.9/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.9\.1/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
