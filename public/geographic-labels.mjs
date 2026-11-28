@@ -28,25 +28,19 @@ export function visiblePeaks(catalog,profile,observer){
  }
  return out;
 }
-export function layoutPeakLabels(peaks,project,w,h,measure){
- const result=[],occupied=[];
- // Prefer the higher angular summit if several labels compete in a small frame.
+export function layoutPeakLabels(peaks,project,w,h,measure,reserved=[]){
+ const result=[],occupied=[...reserved],angle=-Math.PI/3,c=Math.cos(angle),s=Math.sin(angle);
+ // Preserve the original summit priority. Time labels reserve their space first.
  const sorted=[...peaks].sort((a,b)=>b.alt-a.alt||a.distance-b.distance);
  for(const p of sorted){
   const [x,y]=project(p.az,p.alt);if(x<4||x>w-4||y<20||y>h-28)continue;
-  const label=p.name+' '+p.height+'m',distance=(p.distance/1000).toFixed(1)+'km',width=Math.max(measure(label),measure(distance))+8;
-  for(const side of [1,-1]){
-   const length=width+12,angle=side===1?-Math.PI/3:Math.PI/3;
-   const ux=side*.5,uy=-Math.sqrt(3)/2,lx=x+ux*length,ly=y+uy*length;
-   // Two lines are rotated along the approved leader. Bound their rotated
-   // rectangles as well as the leader so labels do not collide.
-   const tx=side===1?x:lx,ty=side===1?y:ly,c=Math.cos(angle),s=Math.sin(angle);
-   const corners=[[0,-25],[length,-25],[0,3],[length,3]].map(([a,b])=>[tx+a*c-b*s,ty+a*s+b*c]);
-   const minX=Math.min(x,lx,...corners.map(p=>p[0])),maxX=Math.max(x,lx,...corners.map(p=>p[0])),minY=Math.min(y,ly,...corners.map(p=>p[1])),maxY=Math.max(y,ly,...corners.map(p=>p[1]));
-   const box={x:minX,y:minY,w:maxX-minX,h:maxY-minY};
-   if(box.x<3||box.x+box.w>w-3||box.y<24||box.y+box.h>h-28||occupied.some(o=>o.x<box.x+box.w&&o.x+o.w>box.x&&o.y<box.y+box.h&&o.y+o.h>box.y))continue;
-   occupied.push(box);result.push({...p,x,y,tx,ty,angle,label,distanceLabel:distance,box,side,leaderX:lx,leaderY:ly});break;
-  }
+  const label=p.name+' '+p.height+'m',distanceLabel=(p.distance/1000).toFixed(1)+'km';
+  const length=Math.max(measure(label),measure(distanceLabel))+12,lx=x+c*length,ly=y+s*length;
+  const corners=[[0,-28],[length,-28],[0,3],[length,3]].map(([a,b])=>[x+a*c-b*s,y+a*s+b*c]);
+  const minX=Math.min(x,lx,...corners.map(p=>p[0])),maxX=Math.max(x,lx,...corners.map(p=>p[0])),minY=Math.min(y,ly,...corners.map(p=>p[1])),maxY=Math.max(y,ly,...corners.map(p=>p[1]));
+  const box={x:minX,y:minY,w:maxX-minX,h:maxY-minY};
+  if(box.x<3||box.x+box.w>w-3||box.y<24||box.y+box.h>h-28||occupied.some(o=>o.x<box.x+box.w&&o.x+o.w>box.x&&o.y<box.y+box.h&&o.y+o.h>box.y))continue;
+  occupied.push(box);result.push({...p,x,y,tx:x,ty:y,angle,label,distanceLabel,box,side:1,leaderX:lx,leaderY:ly});
  }
  return result;
 }
