@@ -1,7 +1,7 @@
 import {R,DEG,wrap,clamp,angleDelta,panoramaY,panoramaAltitude,destination,sunPosition} from './core.mjs';
 import {surfaceAt,blendSurface} from './coast-surface.mjs';
 import {normalFromSamples,receiverLight,receiverHorizon} from './light-engine.mjs';
-import {surfaceIrradiance} from './clear-sky.mjs';
+import {surfaceIrradiance,linearToDisplay} from './clear-sky.mjs';
 import {sampleElevationBatch} from './terrain-store.mjs';
 
 // Bounded receiver grid derived from visible land, not from camera-facing
@@ -80,17 +80,32 @@ export async function shadeReceivers(points,date,minute,options={}){
  }
  return out;
 }
+// A missing receiver has only a standard-sky ambient reference, not a
+// fabricated sunlit surface. Never substitute full-strength distance color.
+export function ambientReference(s,height=0){
+ return surfaceIrradiance({sunAz:s.az,sunAlt:s.geo,height,normal:[0,0,1],direct:0}).diffuse;
+}
+function receiverEnergy(grid,i,distance){
+ const depth=grid.depth?.[i],v=grid.values?.[grid.index?.[i]],ambient=grid.ambient;
+ if(!depth||!v?.illumination||v.value==null)return ambient;
+ const ratio=Math.max(depth,distance)/Math.min(depth,distance);
+ const weight=clamp((1.85-ratio)/.60,0,1)*(v.kind==='provisional'?.55:1);
+ return ambient.map((a,k)=>a+(v.illumination.direct[k]+v.illumination.diffuse[k]-a)*weight);
+}
 export function shadeColor(rgb,grid,x,y,w,h,hit){
- if(!grid||hit?.kind!=='land')return rgb;
- const i=Math.min(grid.rows-1,Math.floor(y/h*grid.rows))*grid.cols+Math.min(grid.cols-1,Math.floor(x/w*grid.cols));
- const d=grid.depth[i],v=grid.values[grid.index[i]];
- if(!v||v.value===null||!d||Math.max(d,hit.distance)>1.6*Math.min(d,hit.distance))return rgb;
- if(!v.illumination)return rgb;
- const weight=v.kind==='provisional'?.55:1;
+ if(!grid||hit?.kind==='water')return rgb;
+ const ambient=grid.ambient??[.08,.08,.08];
+ const g=grid.ambient?grid:{...grid,ambient};
+ let energy=ambient;
+ if(hit?.kind==='land'&&g.cols&&g.rows&&Number.isFinite(hit.distance)){
+  const u=clamp(x/w*g.cols-.5,0,g.cols-1),v=clamp(y/h*g.rows-.5,0,g.rows-1),a=Math.floor(u),b=Math.floor(v),c=Math.min(a+1,g.cols-1),d=Math.min(b+1,g.rows-1),fx=u-a,fy=v-b;
+  const e00=receiverEnergy(g,b*g.cols+a,hit.distance),e10=receiverEnergy(g,b*g.cols+c,hit.distance),e01=receiverEnergy(g,d*g.cols+a,hit.distance),e11=receiverEnergy(g,d*g.cols+c,hit.distance);
+  energy=ambient.map((_,k)=>(e00[k]*(1-fx)+e10[k]*fx)*(1-fy)+(e01[k]*(1-fx)+e11[k]*fx)*fy);
+ }
+ // Match the sky's fixed exposure and use Lambertian radiance E*rho/pi.
+ // The original palette remains an uncalibrated reflectance proxy.
  return rgb.map((c,j)=>{
   const x=c/255,linear=x<=.04045?x/12.92:((x+.055)/1.055)**2.4;
-  const energy=1.4*(v.illumination.direct[j]+v.illumination.diffuse[j]),y=clamp(linear*energy,0,1);
-  const display=255*(y<=.0031308?12.92*y:1.055*y**(1/2.4)-.055);
-  return Math.round(c+(display-c)*weight);
+  return linearToDisplay(linear*Math.max(0,energy[j])/Math.PI);
  });
 }
