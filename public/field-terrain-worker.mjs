@@ -1,4 +1,5 @@
 import {getTile} from './terrain-store.mjs';
+import {refineRidges,mergeRaySamples} from './adaptive-terrain.mjs';
 import {clamp,destination,tilePixel,decodeElevation,elevationStencil,interpolatedHeight,projectTerrainRay} from './core.mjs';
 import {isWaterPixel,waterRanges} from './coast-surface.mjs';
 import {receiverHorizon,normalFromSamples,lightDay} from './light-engine.mjs';
@@ -23,7 +24,7 @@ const sourcePlan=[
  {id:'dem5c_png',name:'5m C',z:15,groups:['fine','near'],smooth:true,minD:5},
  {id:'dem_png',name:'10m',z:14,groups:['fine','near'],smooth:true,minD:10},
  {id:'dem_png',name:'中景',z:13,groups:['mid'],smooth:false,minD:0},
- {id:'dem_png',name:'遠景',z:10,groups:['far'],smooth:false,minD:0}
+ {id:'dem_png',name:'遠景',z:12,groups:['far'],smooth:false,minD:0}
 ];
 
 function lookup(p,loaded,source){const a=loaded.get(source+'/'+p.key);return a?decodeElevation(a[p.i],a[p.i+1],a[p.i+2]):null}
@@ -104,25 +105,35 @@ async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
   complete.push(rc>0&&rv===rc);
  }
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
- return {key:pointKey(target),distances,heights,complete,water,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0,failedTiles,firstTileError};
+ return {key:pointKey(target),target,distances,heights,complete,water,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0,failedTiles,firstTileError};
+}
+async function refineTerrain(data,eyeHeight,isCurrent){
+ let failedTiles=data.failedTiles,firstTileError=data.firstTileError;
+ const requests={onFailure:e=>{failedTiles++;firstTileError??=e?.message??'原因不明'},onRetry:e=>{if(isCurrent())postMessage({type:'progress',id:generation,phase:'retry',message:'通信不安定・再試行 '+e.attempt+'/'+e.max,attempt:e.attempt,max:e.max})}};
+ const refined=await refineRidges({target:data.target,distances:data.distances,heights:data.heights,ground:data.ground,step,eyeHeight,isCurrent,fetchTile:key=>getTile(key,requests),onProgress:(done,total)=>{if(isCurrent())postMessage({type:'progress',id:generation,message:'稜線詳細DEM '+done+'/'+total+' タイル',done,total})}});
+ if(!refined||!isCurrent())return null;
+ const complete=data.complete.map((value,i)=>value&&!refined.rows[i].some(p=>!Number.isFinite(p.h)));
+ return {...data,complete,failedTiles,firstTileError,refined:refined.rows,refinement:refined.stats,eyeHeight};
 }
 
-let retained=null,lightRetained=null;
+let retainedBase=null,retained=null,lightRetained=null;
 async function makeLightProfile(data,id){
  const total=[];
  for(let i=0;i<data.heights.length;i++){
-  total.push(receiverHorizon(data.distances,data.heights[i],data.ground));
+  const ray=mergeRaySamples(data.distances,data.heights[i],data.refined[i]);total.push(receiverHorizon(ray.distances,ray.heights,data.ground));
   if(i%120===119){await pause();if(id!==generation)return null;}
  }
  const k=data.distances.indexOf(20),at=i=>data.heights[i]?.[k];
  const normal=normalFromSamples(at(360),at(1080),at(0),at(720),20);
  return {key:data.key,step,total,complete:data.complete,normal,ground:data.ground,
-  source:data.source,coverage:data.coverage,failedTiles:data.failedTiles??0,firstTileError:data.firstTileError??null,rangeM:70000,normalBaselineM:40};
+  source:data.source,coverage:data.coverage,refinement:data.refinement,failedTiles:data.failedTiles??0,firstTileError:data.firstTileError??null,rangeM:70000,normalBaselineM:40};
 }
 async function handleLight({id,lat,lon,date,force},rayCount){
  const key=pointKey({lat,lon});
  if(force||lightRetained?.key!==key||lightRetained.total.length!==rayCount){
-  const data=await loadTerrain({lat,lon},()=>id===generation,rayCount,false);
+  const base=await loadTerrain({lat,lon},()=>id===generation,rayCount,false);
+  if(!base||id!==generation)return;
+  const data=await refineTerrain(base,0,()=>id===generation);
   if(!data||id!==generation)return;
   const p=await makeLightProfile(data,id);
   if(!p||id!==generation)return;
@@ -134,15 +145,15 @@ async function handleLight({id,lat,lon,date,force},rayCount){
 async function project(data,height,id){
  const surfaces=[];
  for(let i=0;i<data.heights.length;i++){
-  const s=projectTerrainRay(data.distances,data.heights[i],data.ground,height,true);
+  const ray=mergeRaySamples(data.distances,data.heights[i],data.refined[i]);const s=projectTerrainRay(ray.distances,ray.heights,data.ground,height,true);
   const peak=s.segments.at(-1);
   s.water=data.water?.[i]??[];
-  s.peak=peak?{distance:peak.d,altitude:s.angle,elevation:data.heights[i][data.distances.indexOf(peak.d)]}:null;
+  s.peak=peak?{distance:peak.d,altitude:s.angle,elevation:ray.heights[ray.distances.indexOf(peak.d)]}:null;
   surfaces.push(s);
   if(i%120===119){await pause();if(id!==generation)return;}
  }
  if(id!==generation)return;
- postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,failedTiles:data.failedTiles??0,firstTileError:data.firstTileError??null,complete:data.complete,waterDirections:surfaces.filter(s=>s.water.length).length,surfaces,total:surfaces.map(s=>s.angle),height});
+ postMessage({type:'profile',id,ground:data.ground,source:data.source,coverage:data.coverage,failedTiles:data.failedTiles??0,firstTileError:data.firstTileError??null,complete:data.complete,refinement:data.refinement,waterDirections:surfaces.filter(s=>s.water.length).length,surfaces,total:surfaces.map(s=>s.angle),height});
 }
 // rayCount is injectable for small offline regression fixtures only.
 export async function handleTerrainRequest(e,rayCount=N){
@@ -151,7 +162,8 @@ export async function handleTerrainRequest(e,rayCount=N){
  try{
   if(mode==='light'){await handleLight(e.data,rayCount);return;}
   const key=pointKey({lat,lon});
-  if(force||retained?.key!==key||retained.heights.length!==rayCount){const data=await loadTerrain({lat,lon},()=>id===generation,rayCount);if(!data||id!==generation)return;retained=data;}
+  if(force||retainedBase?.key!==key||retainedBase.heights.length!==rayCount){const data=await loadTerrain({lat,lon},()=>id===generation,rayCount,true);if(!data||id!==generation)return;retainedBase=data;retained=null;}
+  if(!retained||retained.eyeHeight!==height){const data=await refineTerrain(retainedBase,height,()=>id===generation);if(!data||id!==generation)return;retained=data;}
   if(id===generation)postMessage({type:'progress',id,message:'稜線を計算中'});
  await project(retained,height,id);
  }catch(e){if(id===generation)postMessage({type:'error',id,message:String(e.message||e)});}

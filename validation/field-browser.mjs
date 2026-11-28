@@ -71,9 +71,11 @@ try{
    const actual=[...canvas.getContext('2d').getImageData(Math.floor(x),Math.floor(y),1,1).data];
    const expected=surfaceColor({kind:'land',distance:550},true);
    const error=actual.slice(0,3).reduce((sum,v,i)=>sum+Math.abs(v-expected[i]),0);
-   return {ground:p.ground,height:p.height,rows,render:{actual,expected,error}};
+   return {ground:p.ground,height:p.height,refinement:p.refinement,rows,render:{actual,expected,error}};
   });
   console.log('ISLAND FIELD',JSON.stringify(debug));
+  assert.ok(debug?.refinement?.validSamples>0,'native ridge refinement must produce measured samples');
+  assert.ok(debug.refinement.selectedTiles<=192,'bounded native tile workload');
   assert.ok(debug?.rows.some(r=>Math.abs(r.az-113.5)<=.25&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600)),'real Onna-iwa must retain elevated foreground surface');
   assert.ok(debug.render.actual[3]>200&&debug.render.error<20,'rendered island must use foreground terrain material rather than distant mountains');
  }
@@ -203,7 +205,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.7\.2/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.8/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
