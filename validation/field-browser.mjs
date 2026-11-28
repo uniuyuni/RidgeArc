@@ -382,6 +382,16 @@ try{
   await mapLab.locator('.map-solar-time.current').waitFor();
   assert.equal((await mapLab.locator('.map-solar-time.current').textContent()).trim(),'07:03');
   assert.ok(await mapLab.locator('.map-solar-time:not(.current)').count()>0);
+  const dome=await mapLab.locator('.sky-dome-overlay').evaluate(e=>({radius:+e.dataset.radius,w:e.clientWidth,h:e.clientHeight,cx:+e.dataset.centerX,cy:+e.dataset.centerY}));
+  assert.ok(dome.radius*2/Math.min(dome.w,dome.h)>.85,'dome uses nearly the full map dimension');
+  assert.ok(Math.abs(dome.cx-dome.w/2)<2&&Math.abs(dome.cy-dome.h/2)<2);
+  assert.ok(await mapLab.locator('.sky-track').count()>0);
+  await mapLab.locator('#seasons').check();assert.ok(await mapLab.locator('.sky-season').count()>=3);
+  await mapLab.locator('#seasons').uncheck();
+  await mapLab.locator('#guides').uncheck();assert.equal(await mapLab.locator('.sky-horizon').count(),0);
+  await mapLab.locator('#guides').check();assert.equal(await mapLab.locator('.sky-horizon').count(),1);
+  await mapLab.locator('#labels').uncheck();assert.equal(await mapLab.locator('.map-solar-time').count(),0);
+  await mapLab.locator('#labels').check();
   const before=await mapLab.locator('#readout').textContent();
   await mapLab.locator('#minute').fill('540');await mapLab.locator('#minute').dispatchEvent('input');
   assert.equal((await mapLab.locator('.map-solar-time.current').textContent()).trim(),'09:00');
