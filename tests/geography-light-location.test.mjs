@@ -34,7 +34,8 @@ test('national catalogue contains actual official peaks and excludes false neare
  for(const k of [i,j])p.surfaces[k]=projectTerrainRay([100,500],[200,200],0,1.6,true);
  assert.equal(visiblePeaks(rows,p,origin).length,0);
  const labels=layoutPeakLabels([{name:'山',height:123,alt:2,az:5,distance:1000}],()=>[100,150],400,300,s=>s.length*6);
- assert.equal(labels.length,1);assert.ok(labels[0].leaderY<labels[0].y);
+ assert.equal(labels.length,1);assert.ok(labels[0].leaderY<labels[0].y&&labels[0].leaderX>labels[0].x);assert.equal(labels[0].angle,-Math.PI/3);
+ const suppressed=layoutPeakLabels([{name:'山',height:123,alt:2,az:5,distance:1000}],()=>[100,150],400,300,s=>s.length*6,[labels[0].box]);assert.equal(suppressed.length,0);
 });
 test('GSI locality resolver uses safe text and memoizes repeated point',async()=>{
  let calls=0;const resolve=localityResolver({fetcher:async()=>{calls++;return {ok:true,json:async()=>({results:{lv01Nm:'雨晴'}})}}});
