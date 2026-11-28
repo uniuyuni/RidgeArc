@@ -1,0 +1,22 @@
+name: UI Lab interaction tests
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'public/ui-lab/**'
+      - 'validation/ui-lab-browser.mjs'
+      - '.github/workflows/ui-lab-tests.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ui-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save --no-package-lock playwright@1.56.1 leaflet@1.9.4 pngjs@7.0.0
+      - run: node validation/ui-lab-browser.mjs
