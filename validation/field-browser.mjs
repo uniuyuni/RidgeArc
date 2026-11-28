@@ -352,7 +352,15 @@ try{
   await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:90000});
   assert.equal(await lab.locator('#results article').count(),5);
   assert.equal(await lab.locator('#run').isEnabled(),true);
-  await lab.close();
+  await lab.locator('#kind').selectOption('G5');
+  const targetHeight=await lab.evaluate(async()=>{const {sunPosition,R,DEG}=await import('/core.mjs');const s=sunPosition('2026-11-30',423,36.81457,137.04533),d=500;return Math.max(0,1.6+Math.tan(s.alt*DEG)*d+d*d/(2*R))});
+  await lab.locator('#subjectHeight').fill(String(targetHeight));await lab.locator('#minM').fill('500');await lab.locator('#maxM').fill('500');
+  await lab.locator('#run').click();await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:90000});
+  assert.ok(await lab.locator('#results article').count()>0,'synthetic G5 must return geometry-matched candidates');
+  const popupPromise=context.waitForEvent('page');await lab.locator('#results article').first().getByText('FIELDで確認').click();const fromLab=await popupPromise;
+  await fromLab.locator('#date').waitFor();assert.equal(await fromLab.locator('#date').inputValue(),'2026-11-30');
+  assert.ok(fromLab.url().includes('#snapshot='));
+  await fromLab.close();await lab.close();
   const failure=await context.newPage();
   await failure.addInitScript(()=>{
    const NativeWorker=window.Worker;
@@ -376,6 +384,19 @@ try{
   await failure.locator('#fieldAcqDetail').waitFor({state:'visible'});
   assert.match(await failure.locator('#fieldAcqDetail').innerText(),/HTTP 503/);
   await failure.close();
+ }
+ if(live){
+  const lab=await context.newPage();
+  await lab.goto('http://127.0.0.1:'+server.address().port+'/ui-lab/location-search.html');
+  await lab.locator('#minM').fill('500');await lab.locator('#maxM').fill('500');await lab.locator('#tolerance').fill('2');
+  await lab.locator('#run').click();await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:180000});
+  const subjectStatus=await lab.locator('#status').innerText();console.log('LIVE G5:',subjectStatus,await lab.locator('#results').innerText());
+  assert.match(subjectStatus,/候補 5点/);
+  await lab.locator('#kind').selectOption('G4');await lab.locator('#radius').fill('100');await lab.locator('#gridStep').fill('250');
+  await lab.locator('#run').click();await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:180000});
+  console.log('LIVE G4:',await lab.locator('#status').innerText(),await lab.locator('#results').innerText());
+  assert.equal(await lab.locator('#results article').count(),1);
+  await lab.close();
  }
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
