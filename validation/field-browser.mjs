@@ -151,6 +151,24 @@ try{
   return values;
  });
  assert.ok(glow.every(v=>v>25),'visible halo outside locator radius on all sky backgrounds');
+ const fades=await page.evaluate(async()=>{
+  const {drawSolarGlow}=await import('/solar-display.mjs');
+  const cv=document.createElement('canvas');cv.width=cv.height=80;const c=cv.getContext('2d');
+  return [0,.25,.5,.75,1].map(opacity=>{c.fillStyle='#293d55';c.fillRect(0,0,80,80);drawSolarGlow(c,40,40,3,opacity);return c.getImageData(50,40,1,1).data[0]});
+ });
+ assert.ok(fades.every((v,i)=>i===0||v>fades[i-1]),'actual halo pixel changes continuously with visibility');
+ const smooth=await page.evaluate(async()=>{
+  const {makeTerrainTexture}=await import('/field-engine.mjs');
+  const a={segments:[{hi:1/11,m:1,b:-300,d:330,near:270}],water:[]};
+  const b={segments:[{hi:1/11,m:1,b:-8000,d:8800,near:7200}],water:[]};
+  const profile={ground:0,height:1.6,total:Array(1440).fill(Math.atan(1/11)*180/Math.PI),surfaces:Array.from({length:1440},(_,i)=>i%2?b:a)};
+  const c=makeTerrainTexture(profile,{az:.125,pitch:0,fov:.25},100,40).getContext('2d');
+  const pixels=c.getImageData(0,20,100,1).data;
+  const red=Array.from({length:100},(_,i)=>pixels[i*4]);
+  return {span:red.at(-1)-red[0],jump:Math.max(...red.slice(1).map((v,i)=>Math.abs(v-red[i])))};
+ });
+ console.log('Terrain angular color gradient:',JSON.stringify(smooth));
+ assert.ok(smooth.span>15&&smooth.jump<=3,'zoomed angular samples must not produce blocky nearest-ray color jumps: '+JSON.stringify(smooth));
  // Actual loupe opens with the same real solar position used for target selection.
  const currentRidge=page.locator('#ridge'),currentRect=await currentRidge.boundingBox();
  // Directly selecting a known trajectory point avoids changing the camera.
@@ -158,9 +176,16 @@ try{
  await currentRidge.click({position:{x:morning[0],y:morning[1]}});
  await currentRidge.dblclick({position:{x:morning[0],y:morning[1]}});
  await page.locator('#solarLoupe').waitFor({state:'visible',timeout:5000});
- assert.match(await page.locator('#loupeTitle').innerText(),/4°/);
+ assert.match(await page.locator('#loupeTitle').innerText(),/2°/);
+ assert.ok((await page.locator('#solarLoupe').boundingBox()).width>=120,'larger desktop loupe');
  await page.locator('#closeLoupe').click();
-
+ const dragTargets=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');return [7,8,9,10,11,12].map(m=>{const sun=solarAt('2026-12-01',8+m/60,36.816525,137.0373667);return project(sun.az,sun.alt,{az:100,pitch:8,fov:95},w,h)})},{w:currentRect.width,h:currentRect.height});
+ await page.mouse.move(currentRect.x+morning[0],currentRect.y+morning[1]);
+ await page.mouse.down();const dragged=[];
+ for(const [x,y] of dragTargets){await page.mouse.move(currentRect.x+x,currentRect.y+y);dragged.push((await page.locator('#clock').innerText()).trim())}
+ await page.mouse.up();
+ assert.ok(dragged.some(t=>/^08:(07|08|10|11)$/.test(t)),'solar drag must select a non-three-minute timestamp: '+dragged.join(','));
+ 
  // Verify the approved timeline workflow using a real solar direction.
  const lock=page.locator('.subjectLockButton');
  // Receiver preset has already selected and locked Oyama.
@@ -205,7 +230,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.8/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.8\.1/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));

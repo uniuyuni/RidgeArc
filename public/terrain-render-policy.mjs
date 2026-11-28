@@ -15,3 +15,12 @@ export function resolveCoverage(red,green,blue,alpha,sampleCount){
  if(alpha<=0)return [0,0,0,0];
  return [Math.round(red/alpha),Math.round(green/alpha),Math.round(blue/alpha),Math.round(255*alpha/sampleCount)];
 }
+
+// Interpolate only displayed radiance/coverage between angular samples.
+// Depth and analytical horizon remain measured; no interpolated hit is
+// supplied to the lighting or visibility engine.
+export function mixDisplaySamples(a,b,f){
+ const wa=a.alpha*(1-f),wb=b.alpha*f,alpha=wa+wb;
+ if(alpha<=0)return {rgb:[0,0,0],alpha:0};
+ return {rgb:a.rgb.map((v,i)=>(v*wa+b.rgb[i]*wb)/alpha),alpha};
+}

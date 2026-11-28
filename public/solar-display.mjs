@@ -1,6 +1,6 @@
 import {project,diskBoundary} from './field-engine.mjs';
 
-export const LOUPE_FOV=4;
+export const LOUPE_FOV=2;
 export const SUN_MIN_DIAMETER=6;
 export const SUN_MARKER_RADIUS=7.5;
 export const SUN_MARKER_COLOR='#ff625f';
@@ -25,14 +25,17 @@ export function solarDisplayRadius(s,view,w,options){
  return options.minimum?Math.max(SUN_MIN_DIAMETER/2,r):r;
 }
 export function showSunMarker(s,view,w,options){return options.marker&&solarDisplayRadius(s,view,w,options)<SUN_MARKER_RADIUS}
-export function drawSolarGlow(c,x,y,r){
+// Visual aid opacity follows the physical visible fraction, not a binary switch.
+export function solarGlowOpacity(visibility){return visibility.estimate==null?1:Math.max(0,Math.min(1,visibility.estimate))}
+export function drawSolarGlow(c,x,y,r,opacity=1){
+ if(opacity<=0)return;
  const extent=Math.max(18,r*.8),outer=r+extent;
  const gradient=c.createRadialGradient(x,y,r,x,y,outer);
  gradient.addColorStop(0,'rgba(255,255,235,0.95)');
  gradient.addColorStop(.3,'rgba(255,231,159,0.72)');
  gradient.addColorStop(.65,'rgba(255,208,120,0.32)');
  gradient.addColorStop(1,'rgba(255,208,120,0)');
- c.save();c.fillStyle=gradient;c.fillRect(x-outer,y-outer,outer*2,outer*2);c.restore();
+ c.save();c.globalAlpha*=opacity;c.fillStyle=gradient;c.fillRect(x-outer,y-outer,outer*2,outer*2);c.restore();
 }
 export function drawSunMarker(c,x,y,hidden){
  c.save();c.strokeStyle=SUN_MARKER_COLOR;c.lineWidth=1.2;if(hidden)c.setLineDash([2,2]);c.beginPath();c.arc(x,y,SUN_MARKER_RADIUS,0,Math.PI*2);c.stroke();c.restore();
