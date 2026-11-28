@@ -34,6 +34,12 @@ try{
  const page=await context.newPage(),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
  const start=Date.now();
+ if(live)await page.addInitScript(()=>{
+  const RealWorker=window.Worker;
+  window.Worker=class extends RealWorker{
+   constructor(...args){super(...args);this.addEventListener('message',e=>{if(e.data.type==='profile')window.__terrainProfile=e.data})}
+  };
+ });
  await page.goto('http://127.0.0.1:'+server.address().port+'/field/');
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
  console.log('observer:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),Date.now()-start+'ms');
@@ -46,6 +52,32 @@ try{
  await page.waitForFunction(()=>/^(裸地DEM |日照計算失敗)/.test(document.querySelector('[data-status]')?.textContent),null,{timeout:live?180000:90000});
  const initialSubject=await page.locator('[data-status]').textContent();
  console.log('initial Onna-iwa:',initialSubject);
+ if(live){
+  const debug=await page.evaluate(async()=>{
+   const {surfaceAt}=await import('/coast-surface.mjs');
+   const p=window.__terrainProfile;
+   if(!p)return null;
+   const rows=[];
+   for(let az=108;az<=120;az+=.25){
+    const i=Math.round(az/.25),surface=p.surfaces[i];
+    const hits=surface.segments.filter(s=>s.d>450&&s.d<650);
+    if(hits.length||az%1===0)rows.push({az,peak:surface.peak,hits,probe:[-.3,0,.3,.6,1,1.5,2].map(a=>({a,hit:surfaceAt(surface,Math.tan(a*Math.PI/180),p.ground+p.height)}))});
+   }
+   const {makeTerrainTexture,project}=await import('/field-engine.mjs');
+   const {surfaceColor}=await import('/coast-surface.mjs');
+   const view={az:113.5,pitch:.3,fov:20},w=400,h=200;
+   const canvas=makeTerrainTexture(p,view,w,h,true);
+   const [x,y]=project(113.5,.5,view,w,h);
+   const actual=[...canvas.getContext('2d').getImageData(Math.floor(x),Math.floor(y),1,1).data];
+   const expected=surfaceColor({kind:'land',distance:550},true);
+   const error=actual.slice(0,3).reduce((sum,v,i)=>sum+Math.abs(v-expected[i]),0);
+   return {ground:p.ground,height:p.height,rows,render:{actual,expected,error}};
+  });
+  console.log('ISLAND FIELD',JSON.stringify(debug));
+  assert.ok(debug?.rows.some(r=>Math.abs(r.az-113.5)<=.25&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600)),'real Onna-iwa must retain elevated foreground surface');
+  assert.ok(debug.render.actual[3]>200&&debug.render.error<20,'rendered island must use foreground terrain material rather than distant mountains');
+ }
+
  assert.match(initialSubject,/^裸地DEM /,'initial island ground must resolve');
  if(!initialSubject.includes('通信失敗'))assert.equal(await page.locator('[data-retry]').isHidden(),true,'expected DEM gaps must not trigger retry');
 
@@ -171,7 +203,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.7\.1/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.7\.2/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
