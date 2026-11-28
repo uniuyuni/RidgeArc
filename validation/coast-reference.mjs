@@ -26,3 +26,24 @@ for(const [lat,lon] of [[36.84,137.10],[36.85,137.15],[36.805,137.03],[36.815,13
  const p=tilePixel(lat,lon,14),a=await tile('pale',p.key);
  console.log('pale',lat,lon,a?Array.from(a.slice(p.i,p.i+4)):null);
 }
+
+
+ // Independent dense native-pixel sampling of the initial island and sightline.
+ const observer={lat:36.816493,lon:137.039471},island={lat:36.8145056,lon:137.0452028};
+ const rad=Math.PI/180,dlat=(island.lat-observer.lat)*rad,dlon=(island.lon-observer.lon)*rad;
+ const d=6371000*2*Math.asin(Math.sqrt(Math.sin(dlat/2)**2+Math.cos(observer.lat*rad)*Math.cos(island.lat*rad)*Math.sin(dlon/2)**2));
+ const az=(Math.atan2(Math.sin(dlon)*Math.cos(island.lat*rad),Math.cos(observer.lat*rad)*Math.sin(island.lat*rad)-Math.sin(observer.lat*rad)*Math.cos(island.lat*rad)*Math.cos(dlon))/rad+360)%360;
+ console.log('ISLAND geometry',JSON.stringify({d,az}));
+ for(const [id,z] of [['dem1a_png',17],['dem5a_png',15],['dem5b_png',15],['dem5c_png',15],['dem_png',14]]){
+  const eye=await sample(observer.lat,observer.lon,z,id);
+  const center=await sample(island.lat,island.lon,z,id);
+  const points=[];
+  for(let offset=-40;offset<=40;offset+=2)for(let cross=-40;cross<=40;cross+=2){
+   const [lat,lon]=destination(island.lat,island.lon,0,offset);
+   const [la,lo]=destination(lat,lon,90,cross);
+   points.push({offset,cross,h:await sample(la,lo,z,id)});
+  }
+  const valid=points.filter(p=>p.h!=null).sort((a,b)=>b.h-a.h);
+  const ray=[];for(let offset=-45;offset<=45;offset+=2){const [lat,lon]=destination(observer.lat,observer.lon,az,d+offset);ray.push({offset,h:await sample(lat,lon,z,id)})}
+  console.log('ISLAND source',JSON.stringify({id,z,eye,center,valid:valid.length,peak:valid[0]??null,ray}));
+ }
