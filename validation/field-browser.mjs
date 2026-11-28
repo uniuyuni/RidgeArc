@@ -46,6 +46,9 @@ try{
  // Verify the shipped initial coastal observer and small-island subject, not just a synthetic inland fixture.
  assert.match(await page.locator('.observerLabLabel').innerText(),/雨晴海岸/);
  assert.match(await page.locator('.subjectLabLabel').innerText(),/女岩/);
+ assert.equal((await page.locator('#clock').innerText()).trim(),'07:03');
+ assert.equal(await page.locator('#date').inputValue(),'2026-11-30');
+ assert.match(await page.locator('#ridgeStats').innerText(),/119\.5°/);
  assert.equal(await page.locator('.subjectLockButton').getAttribute('aria-pressed'),'true');
  const initialGround=await page.locator('#fieldAcquisition').getAttribute('data-detail');
  if(!initialGround.includes('通信失敗'))assert.equal(await page.locator('#fieldAcquisition').getAttribute('data-phase'),'done','expected DEM no-data must not require retry');
@@ -65,9 +68,11 @@ try{
    }
    const {makeTerrainTexture,project}=await import('/field-engine.mjs');
    const {surfaceColor}=await import('/coast-surface.mjs');
-   const view={az:113.5,pitch:.3,fov:20},w=400,h=200;
+   const candidate=rows.find(r=>r.az>=113&&r.az<=117&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600));
+   if(!candidate)return {ground:p.ground,height:p.height,refinement:p.refinement,rows,render:null};
+   const view={az:candidate.az,pitch:.3,fov:20},w=400,h=200;
    const canvas=makeTerrainTexture(p,view,w,h,true);
-   const [x,y]=project(113.5,.5,view,w,h);
+   const [x,y]=project(candidate.az,.5,view,w,h);
    const actual=[...canvas.getContext('2d').getImageData(Math.floor(x),Math.floor(y),1,1).data];
    const expected=surfaceColor({kind:'land',distance:550},true);
    const error=actual.slice(0,3).reduce((sum,v,i)=>sum+Math.abs(v-expected[i]),0);
@@ -76,8 +81,8 @@ try{
   console.log('ISLAND FIELD',JSON.stringify(debug));
   assert.ok(debug?.refinement?.validSamples>0,'native ridge refinement must produce measured samples');
   assert.ok(debug.refinement.selectedTiles<=192,'bounded native tile workload');
-  assert.ok(debug?.rows.some(r=>Math.abs(r.az-113.5)<=.25&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600)),'real Onna-iwa must retain elevated foreground surface');
-  assert.ok(debug.render.actual[3]>200&&debug.render.error<20,'rendered island must use foreground terrain material rather than distant mountains');
+  assert.ok(debug?.rows.some(r=>r.az>=113&&r.az<=117&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600)),'real Onna-iwa must retain elevated foreground surface');
+  assert.ok(debug.render?.actual[3]>200&&debug.render.error<20,'rendered island must use foreground terrain material rather than distant mountains');
  }
 
  assert.match(initialSubject,/^裸地DEM /,'initial island ground must resolve');
@@ -115,6 +120,9 @@ try{
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
  assert.ok(await page.locator('#ridgeDepth').isVisible());
  {
+  // The flat synthetic DEM is below a narrow upward-looking morning frame.
+  // Widen for the existing scene-light receiver regression, then restore the frame.
+  await page.locator('#ridge').dispatchEvent('wheel',{deltaY:Math.log(95/9)/.002});
   await page.locator('[data-sheet=settings]').click();
   const layer=page.locator('[data-layer="日照・陰影"]');
   if(!await layer.isVisible())await page.locator('[data-settings-tab=layers]').click();
@@ -124,6 +132,7 @@ try{
   console.log('scene:',await page.locator('#sceneStatus').innerText());
   if(!live)assert.match(await page.locator('#sceneStatus').innerText(),/日照概算 [1-9]\d*\//);
   await page.locator('[data-sheet=settings]').click();if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();await layer.uncheck();await page.locator('#close').click();
+  await page.locator('#ridge').dispatchEvent('wheel',{deltaY:Math.log(9/95)/.002});
  }
  console.log('coastal:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),await page.locator('#ridgeDepth').innerText());
  // Check independent option controls and actual rendered halo pixels.
@@ -172,19 +181,19 @@ try{
  // Actual loupe opens with the same real solar position used for target selection.
  const currentRidge=page.locator('#ridge'),currentRect=await currentRidge.boundingBox();
  // Directly selecting a known trajectory point avoids changing the camera.
- const morning=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');const sun=solarAt('2026-12-01',8,36.816525,137.0373667);return project(sun.az,sun.alt,{az:100,pitch:8,fov:95},w,h)},{w:currentRect.width,h:currentRect.height});
+ const morning=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');const sun=solarAt('2026-12-01',7+3/60,36.816525,137.0373667);return project(sun.az,sun.alt,{az:116.6,pitch:4.5,fov:9},w,h)},{w:currentRect.width,h:currentRect.height});
  await currentRidge.click({position:{x:morning[0],y:morning[1]}});
  await currentRidge.dblclick({position:{x:morning[0],y:morning[1]}});
  await page.locator('#solarLoupe').waitFor({state:'visible',timeout:5000});
  assert.match(await page.locator('#loupeTitle').innerText(),/2°/);
  assert.ok((await page.locator('#solarLoupe').boundingBox()).width>=120,'larger desktop loupe');
  await page.locator('#closeLoupe').click();
- const dragTargets=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');return [7,8,9,10,11,12].map(m=>{const sun=solarAt('2026-12-01',8+m/60,36.816525,137.0373667);return project(sun.az,sun.alt,{az:100,pitch:8,fov:95},w,h)})},{w:currentRect.width,h:currentRect.height});
+ const dragTargets=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');return [4,5,6,7,8].map(m=>{const sun=solarAt('2026-12-01',7+m/60,36.816525,137.0373667);return project(sun.az,sun.alt,{az:116.6,pitch:4.5,fov:9},w,h)})},{w:currentRect.width,h:currentRect.height});
  await page.mouse.move(currentRect.x+morning[0],currentRect.y+morning[1]);
  await page.mouse.down();const dragged=[];
  for(const [x,y] of dragTargets){await page.mouse.move(currentRect.x+x,currentRect.y+y);dragged.push((await page.locator('#clock').innerText()).trim())}
  await page.mouse.up();
- assert.ok(dragged.some(t=>/^08:(07|08|10|11)$/.test(t)),'solar drag must select a non-three-minute timestamp: '+dragged.join(','));
+ assert.ok(dragged.some(t=>/^07:(04|05|07|08)$/.test(t)),'solar drag must select a non-three-minute timestamp: '+dragged.join(','));
  
  // Verify the approved timeline workflow using a real solar direction.
  const lock=page.locator('.subjectLockButton');
@@ -203,7 +212,7 @@ try{
  assert.ok(await page.locator('#labBodyMoon').isDisabled());
  assert.ok(await page.locator('#labRunSearch').isDisabled());
  const ridge=page.locator('#ridge'),rect=await ridge.boundingBox();
- const target=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');const sun=solarAt('2026-12-01',8,36.816525,137.0373667);return project(sun.az,sun.alt,{az:100,pitch:8,fov:95},w,h)},{w:rect.width,h:rect.height});
+ const target=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');const sun=solarAt('2026-12-01',7+3/60,36.816525,137.0373667);return project(sun.az,sun.alt,{az:116.6,pitch:4.5,fov:9},w,h)},{w:rect.width,h:rect.height});
  assert.ok(target[0]>0&&target[0]<rect.width&&target[1]>0&&target[1]<rect.height);
  await page.mouse.move(rect.x+target[0],rect.y+target[1]);await page.mouse.down();await page.waitForTimeout(680);await page.mouse.up();
  await page.locator('#labSearchPeriod').selectOption('f31');
@@ -230,7 +239,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.8\.2/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.8\.3/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
