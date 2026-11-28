@@ -12,7 +12,7 @@ const server=createServer(async(req,res)=>{
   if(p!==root&&!p.startsWith(root+sep)){res.writeHead(403).end();return;}
   if(p.endsWith(sep)||!extname(p))p=resolve(p,'index.html');
   const b=await readFile(p);
-  res.setHeader('Content-Type',extname(p)==='.mjs'?'text/javascript':extname(p)==='.html'?'text/html; charset=utf-8':'application/octet-stream');res.end(b);
+  res.setHeader('Content-Type',extname(p)==='.mjs'?'text/javascript':extname(p)==='.html'?'text/html; charset=utf-8':extname(p)==='.css'?'text/css':'application/octet-stream');res.end(b);
  }catch{res.writeHead(404).end()}
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -49,6 +49,39 @@ try{
  assert.match(await page.locator('.subjectLabLabel').innerText(),/女岩/);
  assert.equal((await page.locator('#clock').innerText()).trim(),'07:03');
  assert.equal(await page.locator('#date').inputValue(),'2026-11-30');
+ if(!live){
+  const dome=page.locator('#map .sky-dome-overlay'),track=dome.locator('.sky-track');
+  assert.equal(await dome.locator('.sky-current').count(),1);
+  assert.equal((await dome.locator('.map-solar-time.current').textContent()).trim(),'07:03');
+  assert.equal(await dome.evaluate(e=>getComputedStyle(e).pointerEvents),'none');
+  const size=await dome.evaluate(e=>({r:+e.dataset.radius,w:e.clientWidth,h:e.clientHeight}));
+  assert.ok(Math.abs(size.r-(Math.min(size.w,size.h)/2-18))<1);
+  const path=await track.first().getAttribute('points');
+  await page.locator('#date').fill('2026-06-21');await page.locator('#date').dispatchEvent('change');
+  assert.notEqual(await track.first().getAttribute('points'),path);
+  await page.locator('#date').fill('2026-11-30');await page.locator('#date').dispatchEvent('change');
+  await page.locator('[data-sheet=settings]').click();
+  const layer=name=>page.locator('[data-layer="'+name+'"]');
+  if(!await layer('天球ドーム').isVisible())await page.locator('[data-settings-tab=layers]').click();
+  if(!await layer('天球ドーム').isVisible())await page.locator('[data-layer-group="天体"] summary').click();
+  await layer('天球の季節軌跡').check();assert.ok(await dome.locator('.sky-season').count()>=3);
+  await layer('天球の季節軌跡').uncheck();
+  await layer('天球の高度ガイド').uncheck();assert.equal(await dome.locator('.sky-horizon').count(),0);
+  await layer('天球の高度ガイド').check();
+  await layer('天球の時刻ラベル').uncheck();assert.equal(await dome.locator('.map-solar-time').count(),0);
+  await layer('天球の時刻ラベル').check();
+  await layer('天球ドーム').uncheck();assert.equal(await dome.locator('g').count(),0);
+  await layer('太陽方位線').check();assert.ok(await dome.locator('.sky-bearing-track').count()>0);
+  await layer('太陽方位線').uncheck();
+  await layer('天球ドーム').check();
+  await layer('太陽の軌跡').uncheck();assert.equal(await track.count(),0);
+  await layer('太陽の軌跡').check();await page.locator('#close').click();
+  await page.locator('button[data-page="map"]').click();
+  const full=await dome.evaluate(e=>({r:+e.dataset.radius,w:e.clientWidth,h:e.clientHeight}));
+  assert.ok(full.r>=size.r);
+  await page.locator('button[data-page="both"]').click();
+ }
+
  assert.match(await page.locator('#ridgeStats').innerText(),/119\.5°/);
  assert.equal(await page.locator('.subjectLockButton').getAttribute('aria-pressed'),'true');
  const initialGround=await page.locator('#fieldAcquisition').getAttribute('data-detail');
