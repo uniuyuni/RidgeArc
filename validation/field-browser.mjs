@@ -60,7 +60,9 @@ try{
  // Exercise coastal viewpoint at rain/sea boundary with actual FIELD UI.
  await page.locator('#detailReturn').click();
  await page.locator('#detailPage').waitFor({state:'hidden'});
- await page.locator('[data-sheet=search]').click();
+ await page.locator('[data-sheet=settings]').click();
+ if(!await page.locator('#locSettings').isVisible())await page.locator('[data-settings-tab=general]').click();
+ await page.locator('#locSettings').click();
  await page.locator('#locLat').fill('36.816525');
  await page.locator('#locLon').fill('137.0373667');
  await page.locator('#locGo').click();
@@ -78,19 +80,40 @@ try{
   await page.locator('[data-sheet=settings]').click();if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();await layer.uncheck();await page.locator('#close').click();
  }
  console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
+ // Verify the approved timeline workflow using a real solar direction.
+ const lock=page.locator('.subjectLockButton');
+ // Receiver preset has already selected and locked Oyama.
+ assert.equal(await lock.getAttribute('aria-pressed'),'true');
+ if(await page.locator('#subjectEdge').isVisible()){await page.locator('#subjectEdge').click();await page.waitForTimeout(500)}
+ const beforeObserver=await page.locator('.ridge-marker').getAttribute('style');
+ await lock.click();assert.equal(await lock.getAttribute('aria-pressed'),'false');
+ assert.equal(await page.locator('.ridge-marker').getAttribute('style'),beforeObserver);
+ // The unlocked marker can now be offscreen; subsequent search is independent.
+ const before=await page.locator('#stage').boundingBox();
  await page.locator('[data-sheet=search]').click();
- await page.locator('#startComposition').click();assert.equal(await page.locator('#compositionHint').isVisible(),true);
- // Choose the displayed current Sun direction through the actual panorama, not angle fields.
- const ridge=page.locator('#ridge');const rect=await ridge.boundingBox();
- // A visible target near the southeast horizon is suitable for a wide tolerance search.
- const x=rect.width/2+20*rect.width/95,y=rect.height/2+(8-3)*rect.width/95;
- await ridge.click({position:{x,y}});
- const align=page.locator('#alignmentSearch');assert.equal(await align.isVisible(),true);
- await align.locator('summary').click();await align.locator('[data-tolerance]').fill('5');await align.locator('[data-end]').fill('2026-12-01');
- await align.locator('[data-run]').click();
- await page.waitForFunction(()=>/件の候補/.test(document.querySelector('#alignmentSearch [data-status]')?.textContent),null,{timeout:30000});
- const result=align.locator('[data-results] button').first();assert.ok(await result.isVisible());await result.click();
+ await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
+ assert.equal(await page.locator('#labSearchbar').isVisible(),true);
+ assert.deepEqual(await page.locator('#stage').boundingBox(),before);
+ assert.ok(await page.locator('#labBodyMoon').isDisabled());
+ assert.ok(await page.locator('#labRunSearch').isDisabled());
+ const ridge=page.locator('#ridge'),rect=await ridge.boundingBox();
+ const target=await page.evaluate(async({w,h})=>{const {solarAt,project}=await import('/field-engine.mjs');const sun=solarAt('2026-12-01',8,36.816525,137.0373667);return project(sun.az,sun.alt,{az:100,pitch:8,fov:95},w,h)},{w:rect.width,h:rect.height});
+ assert.ok(target[0]>0&&target[0]<rect.width&&target[1]>0&&target[1]<rect.height);
+ await page.mouse.move(rect.x+target[0],rect.y+target[1]);await page.mouse.down();await page.waitForTimeout(680);await page.mouse.up();
+ await page.locator('#labSearchPeriod').selectOption('f31');
+ await page.locator('#labSearchDate').fill('2026-12-01');await page.locator('#labSearchDate').dispatchEvent('change');
+ await page.locator('#labRunSearch').click();
+ await page.waitForFunction(()=>document.querySelector('#labRunSearch').getAttribute('aria-label')==='探索済み',null,{timeout:60000});
+ assert.match(await page.locator('#labCandidates').getAttribute('aria-label'),/候補 [1-9]\d*件/);
+ await page.locator('#labCandidates').click();
+ const result=page.locator('#sheetBody .eventRow button').first();
+ assert.ok(await result.isVisible());const label=await result.innerText();await result.click();
  assert.equal(await page.locator('#sheet').isHidden(),true);
+ assert.equal(await page.locator('#date').inputValue(),label.slice(0,10));
+ await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
+ await page.locator('[data-sheet=search]').click();
+ await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
+ assert.equal(await page.locator('#labRunSearch').getAttribute('aria-label'),'探索済み');
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
 }finally{await browser?.close();await new Promise(r=>server.close(r))}
