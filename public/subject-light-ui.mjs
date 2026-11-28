@@ -72,7 +72,7 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
  $('pick').onclick=()=>onPick?.();
  $('current').onclick=()=>{const p=getObserver();select(p.lat,p.lon)};
  $('preset').onclick=()=>select(36.5725646,137.6175013);
- return {select,track(date){return {target,analysis:resultDate===date?analysis:null,pending:pending||!!target&&resultDate!==date&&!$('status').textContent.startsWith('日照計算失敗'),error:$('status').textContent.startsWith('日照計算失敗')}} ,sync(date,m){
+ return {select,invalidate(){requestId++;worker?.terminate();worker=null;target=null;pending=false;clear();status('被写体位置更新中…')},track(date){return {target,analysis:resultDate===date?analysis:null,pending:pending||!!target&&resultDate!==date&&!$('status').textContent.startsWith('日照計算失敗'),error:$('status').textContent.startsWith('日照計算失敗')}} ,sync(date,m){
   const changed=date!==desiredDate;desiredDate=date;minute=m;
   if(changed&&target&&!pending)request();
   else if(changed&&pending){$('result').hidden=true;onTimeline()}
