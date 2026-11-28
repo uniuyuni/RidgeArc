@@ -36,11 +36,11 @@ function render(data,req){
  layer.clearLayers();results.replaceChildren();
  const list=data.results??[];
  status.textContent='探索完了：候補 '+data.sampled+'点'+(data.matched!==undefined?' / 構図一致 '+data.matched+'点 / 検証 '+data.checked+'点':'')+(data.limited?' / 検証上限あり':'')+(data.reason?' / '+data.reason:'')+'。サンプル外を含む解の存在は保証しません。';
- const rank=p=>p.status==='blocked'?2:p.status==='unknown'||p.sunVisibility?.uncertain||p.sunVisibility?.estimate==null&&data.kind==='G5'?1:0;
+ const rank=p=>p.status==='blocked'||(data.kind==='G5'&&p.sunVisibility?.upper===0)?2:p.status==='unknown'||p.sunVisibility?.uncertain||p.sunVisibility?.estimate==null&&data.kind==='G5'?1:0;
  const sorted=[...list].sort((a,b)=>rank(a)-rank(b)||(a.align?.separation??0)-(b.align?.separation??0));
  if(!sorted.length)results.append(element('p','検出された候補なし。探索条件・間隔・DEM欠損を確認してください。'));
  for(const p of sorted){
-  const uncertain=rank(p)===1,blocked=p.status==='blocked',color=blocked?'#f16b70':uncertain?'#bba27a':'#7ca98e',label=blocked?'遮蔽':uncertain?'不明・暫定':'サンプル上可視';
+  const uncertain=rank(p)===1,blocked=rank(p)===2,color=blocked?'#f16b70':uncertain?'#bba27a':'#7ca98e',label=blocked?'遮蔽':uncertain?'不明・暫定':'サンプル上可視';
   const text=[label,p.lat.toFixed(5)+', '+p.lon.toFixed(5),p.date??req.date,p.minute!=null?hh(p.minute):'',p.align?'離角 '+p.align.separation.toFixed(2)+'°':'',p.los?'被写体LOS '+p.los.status:'',p.sunVisibility?.estimate!=null?'太陽可視 '+Math.round(p.sunVisibility.estimate*100)+'%（概算）':'',p.reason??''].filter(Boolean).join(' · ');
   const article=element('article');article.dataset.resultStatus=p.status;article.append(element('strong',label),element('p',text));
   const locate=element('button','地図へ');locate.onclick=()=>{map.setView([p.lat,p.lon],Math.max(14,map.getZoom()));pin.openPopup()};
