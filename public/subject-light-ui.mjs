@@ -19,8 +19,8 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
  <div data-values class="dataGrid"></div>
  <p class="muted">日照時間帯はメインのタイムラインに表示します。</p></div>`;
  const $=q=>root.querySelector('[data-'+q+']');
- let worker=null,requestId=0,target=null,profile=null,analysis=null,desiredDate=null,minute=900,pending=false,resultDate=null,lastRender='',failed=false;
- const status=s=>{$('status').textContent=s;$('retry').hidden=!failed;onTimeline()};
+ let worker=null,requestId=0,target=null,profile=null,analysis=null,desiredDate=null,minute=900,pending=false,resultDate=null,lastRender='',failed=false,watchdog=0;
+ const status=s=>{clearTimeout(watchdog);$('status').textContent=s;$('retry').hidden=!failed;if(pending)watchdog=setTimeout(()=>{worker?.terminate();worker=null;fail('90秒間進捗なし：'+s+'。通信停止または計算Worker停止の可能性。')},90000);onTimeline()};
  const clear=()=>{profile=null;analysis=null;resultDate=null;lastRender='';$('result').hidden=true};
  function fail(message){pending=false;failed=true;clear();status('日照計算失敗：'+message)}
  function request(force=false){
@@ -37,7 +37,7 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
      failed=profile.failedTiles>0;status('裸地DEM '+profile.source+' · 取得率 '+(profile.coverage*100).toFixed(1)+'% · モデル概算'+(profile.failedTiles>0?' · 通信失敗 '+profile.failedTiles+' 件'+(profile.firstTileError?'（'+profile.firstTileError+'）':''):profile.coverage<.999?' · 欠損あり':''));
      render();
     }
-   };worker.onerror=e=>{worker?.terminate();worker=null;fail(e.message||'Workerエラー')};}
+   };worker.onmessageerror=()=>{worker?.terminate();worker=null;fail('計算結果の受信・復号に失敗（Worker messageerror）')};worker.onerror=e=>{worker?.terminate();worker=null;fail(e.message||'Workerの読み込み・実行に失敗（詳細はブラウザにより非公開）')};}
    pending=true;failed=false;clear();status('被写体の地形・日照計算中…');
    worker.postMessage({mode:'light',id:++requestId,lat:target.lat,lon:target.lon,date:desiredDate,force});
   }catch(e){fail(e.message||String(e))}
