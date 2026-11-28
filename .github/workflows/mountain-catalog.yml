@@ -19,5 +19,5 @@ jobs:
       - name: Read official CSV
         run: |
           curl -fL --max-time 35 https://web1.gsi.go.jp/KOKUJYOHO/MOUNTAIN/1003zan20260331.csv -o /tmp/mountains.csv || curl -fL --max-time 35 https://web2.gsi.go.jp/KOKUJYOHO/MOUNTAIN/1003zan20260331.csv -o /tmp/mountains.csv
-          node --input-type=module -e 'import fs from "node:fs"; const bytes=fs.readFileSync("/tmp/mountains.csv"); let s; try{s=new TextDecoder("utf-8",{fatal:true}).decode(bytes)}catch{s=new TextDecoder("shift_jis").decode(bytes)} console.log("CSV_SAMPLE",JSON.stringify(s.split(/\r?\n/).slice(0,5))); console.log("CSV_ROWS",s.split(/\r?\n/).length);'
-          if [ -f scripts/import-mountains.mjs ]; then node scripts/import-mountains.mjs /tmp/mountains.csv /tmp/mountains.json; fi
+          node scripts/import-mountains.mjs /tmp/mountains.csv /tmp/mountains.json
+          cmp /tmp/mountains.json public/data/gsi-mountains.json
