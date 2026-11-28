@@ -166,18 +166,20 @@ try{
   return [0,.25,.5,.75,1].map(opacity=>{c.fillStyle='#293d55';c.fillRect(0,0,80,80);drawSolarGlow(c,40,40,3,opacity);return c.getImageData(50,40,1,1).data[0]});
  });
  assert.ok(fades.every((v,i)=>i===0||v>fades[i-1]),'actual halo pixel changes continuously with visibility');
- const smooth=await page.evaluate(async()=>{
+ const vector=await page.evaluate(async()=>{
   const {makeTerrainTexture}=await import('/field-engine.mjs');
-  const a={segments:[{hi:1/11,m:1,b:-300,d:330,near:270}],water:[]};
-  const b={segments:[{hi:1/11,m:1,b:-8000,d:8800,near:7200}],water:[]};
-  const profile={ground:0,height:1.6,total:Array(1440).fill(Math.atan(1/11)*180/Math.PI),surfaces:Array.from({length:1440},(_,i)=>i%2?b:a)};
-  const c=makeTerrainTexture(profile,{az:.125,pitch:0,fov:.25},100,40).getContext('2d');
-  const pixels=c.getImageData(0,20,100,1).data;
-  const red=Array.from({length:100},(_,i)=>pixels[i*4]);
-  return {span:red.at(-1)-red[0],jump:Math.max(...red.slice(1).map((v,i)=>Math.abs(v-red[i])))};
+  const far={hi:.08,m:.2,b:-960,d:8000,near:4800};
+  const rock={hi:.02,m:.12,b:-55,d:550,near:500};
+  const profile={ground:0,height:1.6,total:Array(1440).fill(Math.atan(.08)*180/Math.PI),surfaces:Array.from({length:1440},(_,i)=>({segments:i===1?[rock,far]:[far],water:[]}))};
+  const view={az:.25,pitch:.85,fov:.75},w=300,h=160;
+  const c=makeTerrainTexture(profile,view,w,h).getContext('2d');
+  const center=[...c.getImageData(150,80,1,1).data],left=[...c.getImageData(45,80,1,1).data],right=[...c.getImageData(255,80,1,1).data];
+  const pixels=c.getImageData(0,80,w,1).data,distinct=new Set(Array.from({length:w},(_,i)=>Array.from(pixels.slice(i*4,i*4+3)).join(',')));
+  return {center,left,right,colors:distinct.size};
  });
- console.log('Terrain angular color gradient:',JSON.stringify(smooth));
- assert.ok(smooth.span>15&&smooth.jump<=3,'zoomed angular samples must not produce blocky nearest-ray color jumps: '+JSON.stringify(smooth));
+ console.log('Vector terrain:',JSON.stringify(vector));
+ assert.ok(vector.center[0]<vector.left[0]-15&&vector.center[0]<vector.right[0]-15,'foreground polygon survives in front of distant terrain');
+ assert.ok(vector.colors<15,'polygons must not smear colors across angular samples');
  // Actual loupe opens with the same real solar position used for target selection.
  const currentRidge=page.locator('#ridge'),currentRect=await currentRidge.boundingBox();
  // Directly selecting a known trajectory point avoids changing the camera.
@@ -239,7 +241,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.8\.3/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.9/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
@@ -277,6 +279,32 @@ try{
  assert.ok(lo<=otherLabel.slice(0,10)&&otherLabel.slice(0,10)<=hi);
  await page.locator('#close').click();
  if(!live){
+  await page.locator('[data-sheet=share]').click();
+  await page.locator('#snapshotName').fill('女岩の朝');
+  await page.locator('#snapshotSave').click();
+  assert.equal(await page.locator('#snapshotList .snapshotEntry').count(),1);
+  assert.match(await page.locator('#snapshotStatus').innerText(),/保存しました/);
+  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('ridgearc.field.snapshots.v1'))[0]);
+  assert.ok(saved.thumbnail?.startsWith('data:image/jpeg;base64,'));
+  await page.locator('#snapshotShare').click();
+  const link=await page.locator('#snapshotLink').inputValue();
+  assert.ok(link.includes('#snapshot='));
+  await page.locator('#close').click();
+  await page.locator('#clock').press('ArrowRight');
+  assert.notEqual((await page.locator('#clock').innerText()).trim(),String(Math.floor(saved.state.minute/60)).padStart(2,'0')+':'+String(saved.state.minute%60).padStart(2,'0'));
+  await page.locator('[data-sheet=share]').click();
+  await page.locator('[data-snapshot-action=restore]').click();
+  await page.locator('#sheet').waitFor({state:'hidden'});
+  await page.locator('[data-sheet=share]').click();
+  await page.locator('#snapshotShare').click();
+  const restored=await page.evaluate(async()=>{const {decodeSnapshot}=await import('/field-snapshot.mjs');return decodeSnapshot(new URL(document.querySelector('#snapshotLink').value).hash.slice(10))});
+  assert.deepEqual(restored,saved.state,'all composition settings must round trip');
+  await page.locator('#close').click();
+  const shared=await context.newPage();await shared.goto(link);
+  await shared.locator('[data-sheet=share]').click();await shared.locator('#snapshotShare').click();
+  const reopened=await shared.evaluate(async()=>{const {decodeSnapshot}=await import('/field-snapshot.mjs');return decodeSnapshot(new URL(document.querySelector('#snapshotLink').value).hash.slice(10))});
+  assert.deepEqual(reopened,saved.state,'share URL restores composition on new page');
+  await shared.close();
   const failure=await context.newPage();
   await failure.addInitScript(()=>{
    const NativeWorker=window.Worker;
