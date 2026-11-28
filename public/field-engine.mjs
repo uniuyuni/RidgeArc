@@ -1,6 +1,7 @@
 import {sunPosition,angleDelta,wrap,panoramaY,panoramaAltitude,horizonAt,visibilityEstimate,diskBoundary,contactEvents,DEG,clamp} from './core.mjs';
 
 import {vectorTerrainTexture} from './vector-terrain.mjs';
+import {rayTerrainTexture} from './ray-terrain.mjs';
 
 // Field preview adapter. Real DEM samples and the existing solar model are used;
 // unknown terrain is never converted to a positive visibility assertion.
@@ -58,6 +59,7 @@ export function dayAnalysis(profile,date,lat,lon){
  return {runs,contacts:contacts.map(c=>({t:c.minute/60,name:(c.to===0?'完全遮蔽':c.from===0?'出現開始':c.to===2?'全円盤出現':'部分遮蔽')+(c.uncertain?'（暫定）':'')}))};
 }
 export function makeTerrainTexture(profile,view,w,h,distanceColor=true,shade=null,pixelRatio=1){
+ if(view.renderer==='ray')return rayTerrainTexture(profile,view,w,h,distanceColor,shade,pixelRatio);
  return vectorTerrainTexture(profile,view,w,h,distanceColor,shade,pixelRatio,STEP);
 }
 export {diskBoundary,panoramaY,panoramaAltitude,wrap,angleDelta,clamp};

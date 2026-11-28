@@ -1,5 +1,6 @@
 import {R,DEG,wrap,clamp,angleDelta,panoramaY,panoramaAltitude,destination,sunPosition} from './core.mjs';
 import {surfaceAt,blendSurface} from './coast-surface.mjs';
+import {surfaceColumn,sampleColumn,viewAzimuth,viewSlope} from './surface-sampling.mjs';
 import {normalFromSamples,receiverLight,receiverHorizon} from './light-engine.mjs';
 import {surfaceIrradiance,linearToDisplay} from './clear-sky.mjs';
 import {sampleElevationBatch} from './terrain-store.mjs';
@@ -17,11 +18,12 @@ export function sceneReceivers(profile,view,w,h,cols=SCENE_COLS,rows=SCENE_ROWS)
  const points=[],index=new Int16Array(cols*rows);index.fill(-1);
  const depth=new Float32Array(cols*rows),k=w/view.fov,eye=profile.ground+profile.height;
  const seen=new Map();
+ const columns=view.renderer==='ray'?Array.from({length:cols},(_,x)=>surfaceColumn(profile,viewAzimuth(view,(x+.5)*w/cols,w))):null;
  for(let y=0;y<rows;y++){
-  const alt=panoramaAltitude(panoramaY(view.pitch)+(h/2-(y+.5)*h/rows)/k),slope=Math.tan(alt*DEG);
+  const slope=viewSlope(view,(y+.5)*h/rows,w,h);
   for(let x=0;x<cols;x++){
    const az=wrap(view.az+((x+.5)*w/cols-w/2)/k),a=az/.25,i=Math.floor(a),j=(i+1)%profile.surfaces.length;
-   const hit=blendSurface(surfaceAt(profile.surfaces[i],slope,eye),surfaceAt(profile.surfaces[j],slope,eye),a-i);
+   const hit=columns?sampleColumn(columns[x],slope):blendSurface(surfaceAt(profile.surfaces[i],slope,eye),surfaceAt(profile.surfaces[j],slope,eye),a-i);
    if(!hit||hit.kind!=='land')continue;
    const d=hit.distance;
    if(d<25)continue; // sub-baseline local geometry is not shadeable by this model
