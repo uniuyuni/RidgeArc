@@ -76,10 +76,10 @@ try{
   await layer('天球ドーム').check();
   await layer('太陽の軌跡').uncheck();assert.equal(await track.count(),0);
   await layer('太陽の軌跡').check();await page.locator('#close').click();
-  await page.locator('button[data-page="map"]').click();
-  const full=await dome.evaluate(e=>({r:+e.dataset.radius,w:e.clientWidth,h:e.clientHeight}));
-  assert.ok(full.r>=size.r);
-  await page.locator('button[data-page="both"]').click();
+  await page.setViewportSize({width:1600,height:900});
+  await page.waitForFunction(previous=>+document.querySelector('#map .sky-dome-overlay').dataset.radius>previous,size.r);
+  await page.setViewportSize({width:1280,height:900});
+  await page.waitForFunction(previous=>Math.abs(+document.querySelector('#map .sky-dome-overlay').dataset.radius-previous)<1,size.r);
  }
 
  assert.match(await page.locator('#ridgeStats').innerText(),/119\.5°/);
@@ -345,7 +345,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.10\.2/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.11/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
