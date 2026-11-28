@@ -99,6 +99,13 @@ try{
  assert.equal(await page.evaluate(()=>JSON.stringify(labBodies.sun)),sunState);
  assert.equal(await page.locator('#labSearchPeriod').inputValue(),'31');
  await page.locator('#labBodyMoon').tap();
+ const cluster=await page.evaluate(()=>{const b=labCandidateBins(document.querySelector('#timeCanvas').clientWidth).find(b=>b.items.length>1);return b?{x:(b.x+b.end)/2,days:labSearch.days}:null});
+ assert.ok(cluster,'annual candidate cluster');
+ await page.locator('#timeCanvas').tap({position:{x:cluster.x,y:40}});
+ assert.equal(await page.locator('#labSearchbar').isVisible(),true);
+ await page.waitForFunction(d=>labZoomFrame===0&&labSearch.days<d,cluster.days);
+ const individual=await page.evaluate(()=>labCandidateBins(document.querySelector('#timeCanvas').clientWidth).find(b=>b.items.length===1)?.items[0].value);
+ if(individual!==undefined){const x=await page.evaluate(v=>{const {scale,off}=labSearchAxis(document.querySelector('#timeCanvas').clientWidth);return off+v*scale},individual);await page.locator('#timeCanvas').tap({position:{x,y:40}});assert.equal(await page.locator('#labNormalTimebar').isVisible(),true);assert.ok(await page.evaluate(v=>Math.abs(selected()-v)<1e-7,individual));await page.locator('[data-sheet=search]').tap()}
  await page.locator('#labCandidates').tap();
  await page.locator('#sheetBody .eventRow button').first().tap();
  assert.equal(await page.locator('#labNormalTimebar').isVisible(),true);
