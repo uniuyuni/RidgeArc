@@ -1,18 +1,19 @@
-import {sceneReceivers} from './scene-light-engine.mjs';
+import {sceneReceivers,ambientReference} from './scene-light-engine.mjs';
+import {sunPosition} from './core.mjs';
 export function createSceneLight(onChange,workerFactory=()=>new Worker(new URL('./scene-light-worker.mjs',import.meta.url),{type:'module'})){
- let worker=null,timer=0,id=0,key='',geometry=null,result=null,status='',pending=false;
+ let worker=null,timer=0,id=0,key='',geometry=null,result=null,ambient=null,status='',pending=false;
  function stop(){
   clearTimeout(timer);if(pending){worker?.postMessage({id:++id,cancel:true});pending=false;}
  }
  function sync(profile,revision,view,w,h,date,enabled){
   if(!enabled||!profile||!w||!h){
-   if(key){stop();key='';geometry=null;result=null;status='';}
+   if(key){stop();key='';geometry=null;result=null;ambient=null;status='';}
    return null;
   }
   const gkey=[revision,view.lat,view.lon,view.az,view.pitch,view.fov,w,h].join('/');
   const minute=Math.floor(view.time*60),next=[gkey,date,minute].join('/');
   if(next!==key){
-   stop();key=next;result=null;status='日照概算：計算準備中';pending=true;
+   stop();key=next;result=null;ambient={key:next+'/ambient',ambient:ambientReference(sunPosition(date,minute,view.lat,view.lon),profile.ground+profile.height)};status='日照概算：計算準備中';pending=true;
    const v={...view},p=profile,request=++id;
    timer=setTimeout(()=>{
     if(request!==id)return;
@@ -25,10 +26,10 @@ export function createSceneLight(onChange,workerFactory=()=>new Worker(new URL('
        pending=false;
        if(m.type==='error'){status='日照計算失敗：'+m.message;onChange();return;}
        if(m.type==='scene'){
-        result={...geometry.grid,values:m.values,key};
+        result={...geometry.grid,values:m.values,ambient:ambient.ambient,key};
         const known=m.values.filter(v=>v.value!==null).length;
         const provisional=m.values.filter(v=>v.kind==='provisional').length;
-        status='日照概算 '+known+'/'+m.values.length+' 点'+(provisional?'（暫定 '+provisional+'）':'')+' · 不明は元の色';
+        status='日照概算 '+known+'/'+m.values.length+' 点'+(provisional?'（暫定 '+provisional+'）':'')+' · 不明は天空光の参考色';
         onChange();
        }
       };
@@ -39,7 +40,7 @@ export function createSceneLight(onChange,workerFactory=()=>new Worker(new URL('
     }catch(e){pending=false;status='日照計算失敗：'+e.message;onChange();}
    },400);
   }
-  return result;
+  return result??ambient;
  }
  return {sync,status:()=>status};
 }
