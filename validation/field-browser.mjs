@@ -43,7 +43,7 @@ try{
  assert.equal(await page.locator('[data-result]').isVisible(),true);
  const values=await page.locator('[data-values]').innerText();
  assert.ok(values.includes('相対直射光量')&&values.includes('最後の日照'));
- assert.ok(await page.locator('[data-bar] span').count()>0);
+ assert.equal(await page.locator('[data-bar]').count(),0);
  if(live){
   const h=Number(values.match(/対象標高\s*([\d.]+) m/)?.[1]);
   assert.ok(h>2500&&h<3300,'unexpected Oyama ground: '+h);
@@ -51,6 +51,7 @@ try{
  console.log('subject:',await page.locator('[data-status]').innerText(),'\n'+values);
  await page.locator('#detailReturn').click();
  await page.locator('#detailPage').waitFor({state:'hidden'});
+ await page.locator('#tracks').click();assert.equal(await page.locator('[data-track="被写体の日照"]').isChecked(),true);await page.locator('#close').click();
  await page.locator('#date').fill('2026-12-01');
  await page.locator('#date').dispatchEvent('change');
  await page.locator('[data-sheet=info]').click();
@@ -78,9 +79,14 @@ try{
  }
  console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
  await page.locator('[data-sheet=search]').click();
- const align=page.locator('#alignmentSearch');await align.locator('summary').click();
- await align.locator('[data-az]').fill('120');await align.locator('[data-alt]').fill('3');
- await align.locator('[data-tolerance]').fill('5');await align.locator('[data-end]').fill('2026-12-01');
+ await page.locator('#startComposition').click();assert.equal(await page.locator('#compositionHint').isVisible(),true);
+ // Choose the displayed current Sun direction through the actual panorama, not angle fields.
+ const ridge=page.locator('#ridge');const rect=await ridge.boundingBox();
+ // A visible target near the southeast horizon is suitable for a wide tolerance search.
+ const x=rect.width/2+20*rect.width/95,y=rect.height/2+(8-3)*rect.width/95;
+ await ridge.click({position:{x,y}});
+ const align=page.locator('#alignmentSearch');assert.equal(await align.isVisible(),true);
+ await align.locator('summary').click();await align.locator('[data-tolerance]').fill('5');await align.locator('[data-end]').fill('2026-12-01');
  await align.locator('[data-run]').click();
  await page.waitForFunction(()=>/件の候補/.test(document.querySelector('#alignmentSearch [data-status]')?.textContent),null,{timeout:30000});
  const result=align.locator('[data-results] button').first();assert.ok(await result.isVisible());await result.click();
