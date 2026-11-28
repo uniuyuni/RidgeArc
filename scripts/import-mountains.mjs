@@ -15,5 +15,4 @@ if(process.argv[1]?.endsWith('import-mountains.mjs')&&process.argv[2]){
  const peaks=parseMountainCsv(s);if(peaks.length<1000||peaks.length>1100)throw Error('Unexpected catalogue count '+peaks.length);
  fs.writeFileSync(process.argv[3],JSON.stringify({source:'国土地理院「日本の主な山岳標高一覧（1003山）」2026-03-31版を加工',url:'https://www.gsi.go.jp/kihonjohochousa/kihonjohochousa41139.html',peaks}));
  console.log('SUMMIT_COUNT',peaks.length);
- for(let i=0;i<peaks.length;i+=100)console.log('SUMMIT_CHUNK',JSON.stringify(peaks.slice(i,i+100)));
 }
