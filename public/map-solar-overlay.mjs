@@ -1,4 +1,4 @@
-import {skyDomePath,domeRadius,seasonalDates} from './map-solar-geometry.mjs';
+import {skyDomePath,skyDomePoint,projectSky,domeRadius,seasonalDates} from './map-solar-geometry.mjs';
 
 const NS='http://www.w3.org/2000/svg';
 const el=(name,attrs={},value)=>{const node=document.createElementNS(NS,name);for(const [k,v] of Object.entries(attrs))node.setAttribute(k,String(v));if(value!==undefined)node.textContent=value;return node};
@@ -6,22 +6,26 @@ const clock=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStar
 export function mountMapSolarOverlay(map,L,readState){
  const svg=el('svg',{'class':'sky-dome-overlay','aria-label':'天球の正射影',role:'img'});
  map.getContainer().append(svg);
- let cached=null;
+ let cached=null,seasonCache=null,lastRender='';
  function render(){
-  const {date,lat,lon,minute,trajectory=true,sun=true,labels=true,guides=true,seasons=false}=readState();
+  const {date,lat,lon,minute,trajectory=true,sun=true,labels=true,guides=true,seasons=false,enabled=true,bearing=false}=readState();
   const {x:w,y:h}=map.getSize(),center=map.latLngToContainerPoint([lat,lon]),r=domeRadius(w,h);
   svg.setAttribute('viewBox','0 0 '+w+' '+h);
   svg.dataset.radius=r;svg.dataset.centerX=center.x;svg.dataset.centerY=center.y;
-  const key=[date,lat,lon,minute,seasons].join('/');
-  if(cached?.key!==key)cached={key,path:skyDomePath(date,{lat,lon},minute),seasonal:seasons?seasonalDates(date).map(v=>({...v,path:skyDomePath(v.date,{lat,lon},minute)})):[]};
-  const {path,seasonal}=cached;
-  svg.replaceChildren();if(!r)return;
+  const renderKey=[date,lat,lon,minute,trajectory,sun,labels,guides,seasons,enabled,bearing,w,h,center.x,center.y].join('/');
+  if(renderKey===lastRender)return;lastRender=renderKey;
+  svg.replaceChildren();if(!r||!enabled&&!bearing||!date)return;
+  const key=[date,lat,lon].join('/'),observer={lat,lon};
+  if(cached?.key!==key)cached={key,path:skyDomePath(date,observer,0)};
+  const seasonKey=[date.slice(0,4),lat,lon].join('/');
+  if(seasons&&enabled&&seasonCache?.key!==seasonKey)seasonCache={key:seasonKey,paths:seasonalDates(date).map(v=>({...v,path:skyDomePath(v.date,observer,0)}))};
+  const path={...cached.path,current:skyDomePoint(date,observer,minute)},seasonal=seasons&&enabled?seasonCache.paths:[];
   const dome=el('g',{transform:'translate('+center.x+' '+center.y+')'});svg.append(dome);
   const xy=p=>[p.x*r,p.y*r];
   const line=(x1,y1,x2,y2,attrs={})=>el('line',{x1,y1,x2,y2,...attrs});
   const circle=(x,y,radius,attrs={})=>el('circle',{cx:x,cy:y,r:radius,...attrs});
   const label=(x,y,value,cls='sky-guide')=>el('text',{x,y,class:cls,'text-anchor':'middle','dominant-baseline':'central'},value);
-  if(guides){
+  if(enabled&&guides){
    dome.append(circle(0,0,r,{fill:'#243843','fill-opacity':.06,stroke:'#fff','stroke-opacity':.8,'stroke-width':1.2,class:'sky-horizon'}));
    for(const alt of [30,60]){
     const d=r*Math.cos(alt*Math.PI/180);
@@ -35,17 +39,21 @@ export function mountMapSolarOverlay(map,L,readState){
    dome.append(label(14,-12,'90°'),label(0,r-12,'0°'));
   }
   function drawPath(value,attrs){for(const segment of value.segments)dome.append(el('polyline',{points:segment.map(p=>xy(p).join(',')).join(' '),fill:'none','stroke-linejoin':'round','stroke-linecap':'round',...attrs}))}
-  if(seasons)for(const v of seasonal){
+  if(enabled&&seasons)for(const v of seasonal){
    drawPath(v.path,{stroke:'#8e7753','stroke-width':1.5,'stroke-dasharray':v.dash,class:'sky-season'});
    if(labels&&v.path.hours.length){const peak=v.path.hours.reduce((a,b)=>a.alt>b.alt?a:b),[x,y]=xy(peak);dome.append(label(x,y-15,v.label))}
   }
-  if(trajectory)drawPath(path,{stroke:'#694e25','stroke-width':4,opacity:.7,class:'sky-track-under'});
-  if(trajectory)drawPath(path,{stroke:'#ffcf72','stroke-width':2,class:'sky-track'});
-  const visible=sun&&path.current.alt>=0,[sx,sy]=xy(path.current),reserved=visible?[[sx,sy-16]]:[];
-  if(trajectory&&labels)for(const p of path.hours){
+  if(enabled&&trajectory)drawPath(path,{stroke:'#694e25','stroke-width':4,opacity:.7,class:'sky-track-under'});
+  if(enabled&&trajectory)drawPath(path,{stroke:'#ffcf72','stroke-width':2,class:'sky-track'});
+  const visible=enabled&&sun&&path.current.alt>=0,[sx,sy]=xy(path.current),reserved=visible?[[sx,sy-16]]:[];
+  if(enabled&&trajectory&&labels)for(const p of path.hours){
    const [x,y]=xy(p);
    if(reserved.some(([a,b])=>Math.abs(a-x)<44&&Math.abs(b-(y+13))<18))continue;
    reserved.push([x,y+13]);dome.append(circle(x,y,2.5,{fill:'#ffcf72',stroke:'#694e25','stroke-width':.7}),label(x,y+13,clock(p.minute),'map-solar-time'));
+  }
+  if(bearing){
+   if(trajectory)drawPath({segments:path.segments.map(segment=>segment.map(p=>projectSky(p.az,0)))},{stroke:'#d9a94e','stroke-width':2,'stroke-dasharray':'4 4',class:'sky-bearing-track'});
+   if(sun){const [bx,by]=xy(projectSky(path.current.az,0));dome.append(line(0,0,bx,by,{stroke:'#d9a94e','stroke-width':1.5,'stroke-dasharray':'5 4',class:'sky-bearing-ray'}));}
   }
   if(visible){
    dome.append(line(0,0,sx,sy,{stroke:'#b88b3d','stroke-width':1,'stroke-dasharray':'3 4'}));
