@@ -1,11 +1,16 @@
 import {tilePixel,elevationStencil,interpolatedHeight,decodeElevation} from './core.mjs';
 const tiles=new Map(),MAX_TILES=256;
 // Bounded automatic retry; a missing GSI tile is a source fallback, not a network error.
+// Keep the same timeout on browsers without AbortSignal.timeout (older WebKit).
+function requestTimeout(ms){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),ms);
+ return {signal:controller.signal,clear:()=>clearTimeout(timer)};
+}
 export async function fetchWithRetry(url,{fetcher=fetch,wait=ms=>new Promise(r=>setTimeout(r,ms)),onRetry=()=>{},timeout=15000,delays=[1000,3000,10000]}={}){
  for(let attempt=0;;attempt++){
   let response,delay=delays[attempt];
   try{
-   response=await fetcher(url,{signal:AbortSignal.timeout(timeout)});
+   const deadline=requestTimeout(timeout);try{response=await fetcher(url,{signal:deadline.signal})}finally{deadline.clear()}
    if(response.ok||response.status===404)return response;
    if(![408,425,429,500,502,503,504].includes(response.status)){const e=Error('HTTP '+response.status);e.permanent=true;throw e}
    const header=response.headers.get('Retry-After');
@@ -23,22 +28,22 @@ export function getTile(key,{onRetry=()=>{},onFailure=()=>{}}={}){
  if(entry&&entry.retryAt&&Date.now()>=entry.retryAt){tiles.delete(key);entry=null}
  if(entry){
   tiles.delete(key);tiles.set(key,entry);
-  if(entry.pending){entry.listeners.add(onRetry);return entry.task.then(v=>{if(entry.failed)onFailure();return v}).finally(()=>entry.listeners.delete(onRetry))}
+  if(entry.pending){entry.listeners.add(onRetry);return entry.task.then(v=>{if(entry.failed)onFailure({key,message:entry.error});return v}).finally(()=>entry.listeners.delete(onRetry))}
   return entry.task;
  }
- entry={task:null,retryAt:0,pending:true,failed:false,listeners:new Set([onRetry])};
+ entry={task:null,retryAt:0,pending:true,failed:false,error:null,listeners:new Set([onRetry])};
  const task=(async()=>{
   const response=await fetchWithRetry('https://cyberjapandata.gsi.go.jp/xyz/'+key+'.png',{onRetry:event=>{for(const cb of entry.listeners)cb(event)}});
   if(response.status===404)return null;
-  const bmp=await createImageBitmap(await response.blob(),{colorSpaceConversion:'none'});
+  const blob=await response.blob();if(typeof createImageBitmap!=='function'||typeof OffscreenCanvas!=='function')throw Error('このブラウザはWorker内のPNGデコードに未対応');const bmp=await createImageBitmap(blob,{colorSpaceConversion:'none'});
   const c=new OffscreenCanvas(256,256);
   const g=c.getContext('2d',{willReadFrequently:true});g.drawImage(bmp,0,0);bmp.close();
   return g.getImageData(0,0,256,256).data;
  })();
- entry.task=task.then(data=>{if(data==null)entry.retryAt=Date.now()+300000;return data;}).catch(()=>{entry.failed=true;if(tiles.get(key)===entry)tiles.delete(key);return null;}).finally(()=>{entry.pending=false;entry.listeners.clear()});
+ entry.task=task.then(data=>{if(data==null)entry.retryAt=Date.now()+300000;return data;}).catch(e=>{entry.failed=true;entry.error=e?.message||String(e);if(tiles.get(key)===entry)tiles.delete(key);return null;}).finally(()=>{entry.pending=false;entry.listeners.clear()});
  tiles.set(key,entry);
  while(tiles.size>MAX_TILES){const victim=[...tiles].find(([,v])=>!v.pending);if(!victim)break;tiles.delete(victim[0])}
- return entry.task.then(v=>{if(entry.failed)onFailure();return v});
+ return entry.task.then(v=>{if(entry.failed)onFailure({key,message:entry.error});return v});
 }
 
 // Bounded tile requests, batch by source and tile. No missing sample is zero-filled.

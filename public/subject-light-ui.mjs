@@ -34,7 +34,7 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
     if(m.type==='light'){
      profile=m.profile;analysis=m.analysis;resultDate=m.date;
      if(resultDate!==desiredDate){request();return;}
-     failed=profile.failedTiles>0||profile.coverage<.999;status('裸地DEM '+profile.source+' · 取得率 '+(profile.coverage*100).toFixed(1)+'% · モデル概算'+(profile.failedTiles>0?' · 通信失敗 '+profile.failedTiles+' 件':failed?' · 欠損あり':''));
+     failed=profile.failedTiles>0;status('裸地DEM '+profile.source+' · 取得率 '+(profile.coverage*100).toFixed(1)+'% · モデル概算'+(profile.failedTiles>0?' · 通信失敗 '+profile.failedTiles+' 件'+(profile.firstTileError?'（'+profile.firstTileError+'）':''):profile.coverage<.999?' · 欠損あり':''));
      render();
     }
    };worker.onerror=e=>{worker?.terminate();worker=null;fail(e.message||'Workerエラー')};}
