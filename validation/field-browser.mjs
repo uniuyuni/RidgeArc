@@ -120,10 +120,12 @@ try{
  await page.locator('[data-sheet=search]').click();
  await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
  assert.equal(await page.locator('#labRunSearch').getAttribute('aria-label'),'探索済み');
- // The compact strip lives outside the actual landscape.
- assert.equal(await page.locator('#ridge').evaluate(el=>el.parentElement.contains(document.querySelector('#fieldAcquisition'))),false);
- assert.ok((await page.locator('#fieldAcquisition').boundingBox()).height<=26);
- assert.match(await page.locator('header .demo').innerText(),/0\.6\.1/);
+ // The one shared overlay is inside the stage and never participates in layout.
+ assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
+ assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
+ assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
+ assert.match(await page.locator('header .demo').innerText(),/0\.6\.2/);
+ await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
  assert.ok(otherLabel,'fixture must contain two distinct dates');
@@ -143,8 +145,12 @@ try{
  await page.mouse.move(startX,y);await page.mouse.down();
  await page.mouse.move(startX+dx,y,{steps:10});await page.mouse.up();
  await page.mouse.move(box.x+box.width/2,y);
+ await page.evaluate(()=>{const c=document.querySelector('#timeCanvas').getContext('2d'),fill=c.fillText,move=c.moveTo,clear=c.fillRect;window.rulerTrace={labels:[],lines:[]};c.fillRect=function(...a){if(a[0]===0&&a[1]===0&&a[3]>23)window.rulerTrace={labels:[],lines:[]};return clear.apply(this,a)};c.fillText=function(t,x,y,...rest){if(y===12&&/^\d{2,4}\/\d{2}(\/\d{2})?$/.test(t))window.rulerTrace.labels.push(x);return fill.call(this,t,x,y,...rest)};c.moveTo=function(x,y){if(y===16)window.rulerTrace.lines.push(x);return move.call(this,x,y)}});
  await page.mouse.wheel(0,Math.log(1/days)/.002);
  await page.waitForTimeout(150);
+ const trace=await page.evaluate(()=>window.rulerTrace);
+ assert.ok(trace.labels.length>0,'visible date labels');
+ assert.ok(trace.labels.every(x=>trace.lines.some(y=>Math.abs(x-y)<1e-6)),'each date label shares its vertical tick coordinate');
  await cv.click({position:{x:box.width/2,y:40}});
  await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
  assert.equal(await page.locator('#labNormalTimebar').isVisible(),true);
