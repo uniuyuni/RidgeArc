@@ -1,6 +1,7 @@
 import {R,DEG,wrap,clamp,angleDelta,panoramaY,panoramaAltitude,destination,sunPosition} from './core.mjs';
 import {surfaceAt,blendSurface} from './coast-surface.mjs';
 import {normalFromSamples,receiverLight,receiverHorizon} from './light-engine.mjs';
+import {surfaceIrradiance} from './clear-sky.mjs';
 import {sampleElevationBatch} from './terrain-store.mjs';
 
 // Bounded receiver grid derived from visible land, not from camera-facing
@@ -74,8 +75,8 @@ export async function shadeReceivers(points,date,minute,options={}){
   }
   const v=receiverLight({},s,p.normal,a=>directionalHorizon(s,horizons,a));
   // Even complete sampled profiles are provisional, not real-world bounds.
-  if(v.direct.upper<=.001)out[i]={kind:'shadow',value:0};
-  else if(v.direct.estimate!==null)out[i]={kind:v.uncertain?'provisional':'lit',value:v.direct.estimate};
+  const value=v.direct.upper<=.001?0:v.direct.estimate;
+  if(value!==null){const kind=value===0?'shadow':v.uncertain?'provisional':'lit';out[i]={kind,value,illumination:surfaceIrradiance({sunAz:s.az,sunAlt:s.geo,height:p.z,normal:p.normal,direct:value})}}
  }
  return out;
 }
@@ -84,7 +85,12 @@ export function shadeColor(rgb,grid,x,y,w,h,hit){
  const i=Math.min(grid.rows-1,Math.floor(y/h*grid.rows))*grid.cols+Math.min(grid.cols-1,Math.floor(x/w*grid.cols));
  const d=grid.depth[i],v=grid.values[grid.index[i]];
  if(!v||v.value===null||!d||Math.max(d,hit.distance)>1.6*Math.min(d,hit.distance))return rgb;
- const f=.63+.37*Math.sqrt(clamp(v.value,0,1));
+ if(!v.illumination)return rgb;
  const weight=v.kind==='provisional'?.55:1;
- return rgb.map((c,j)=>Math.round(clamp(c*(1+(f-1)*weight)+[28,17,3][j]*v.value*weight,0,255)));
+ return rgb.map((c,j)=>{
+  const x=c/255,linear=x<=.04045?x/12.92:((x+.055)/1.055)**2.4;
+  const energy=1.4*(v.illumination.direct[j]+v.illumination.diffuse[j]),y=clamp(linear*energy,0,1);
+  const display=255*(y<=.0031308?12.92*y:1.055*y**(1/2.4)-.055);
+  return Math.round(c+(display-c)*weight);
+ });
 }
