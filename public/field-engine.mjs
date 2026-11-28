@@ -9,6 +9,18 @@ export function project(a,alt,view,w,h){
  const k=w/view.fov;
  return [w/2+angleDelta(a,view.az)*k,h/2+(panoramaY(view.pitch)-panoramaY(alt))*k];
 }
+// Keep the direction under a viewport point fixed as the horizontal FOV changes.
+// Vertical coordinates are linear in panoramaY, not in altitude.
+export function zoomAtPoint(view, requestedFov, x, y, w, h){
+ const fov=clamp(requestedFov,5,180);
+ if(!(w>0&&h>0)||fov===view.fov)return {az:view.az,pitch:view.pitch,fov:view.fov};
+ const delta=(view.fov-fov)/w;
+ return {
+  az:wrap(view.az+(x-w/2)*delta),
+  pitch:clamp(panoramaAltitude(panoramaY(view.pitch)+(h/2-y)*delta),-65,75),
+  fov
+ };
+}
 export function horizon(profile,az){return profile?horizonAt(profile.total,az,STEP):null}
 export function directionComplete(profile,az){
  if(!profile)return false;
