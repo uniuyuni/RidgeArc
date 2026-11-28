@@ -7,9 +7,12 @@ const pointKey=({lat,lon})=>[lat,lon].join('/');
 let generation=0;
 const pause=()=>new Promise(r=>setTimeout(r,0));
 const bands=[
- {start:2,end:80,inc:2,quality:'fine'},
- {start:85,end:300,inc:5,quality:'near'},
- {start:310,end:2000,inc:10,quality:'near'},
+ // Resolve nearby rock stacks and small islands at native DEM scale.
+ // At 800 m the 0.25-degree azimuth spacing is already about 3.5 m;
+ // avoid claiming 1 m angular resolution and keep the all-direction workload bounded.
+ {start:2,end:800,inc:2,quality:'fine'},
+ {start:805,end:1000,inc:5,quality:'near'},
+ {start:1010,end:2000,inc:10,quality:'near'},
  {start:2025,end:8000,inc:40,quality:'mid'},
  {start:8080,end:70000,inc:180,quality:'far'}
 ];
