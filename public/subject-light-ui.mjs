@@ -14,16 +14,16 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
  <button data-current>現在の観測点を被写体にする</button>
  <button data-preset>立山・雄山（参考座標）</button>
  <small class="muted">雄山の座標出典：<a href="https://tatekuro.jp/enjoy/pointDetail.php?id=21" target="_blank" rel="noopener">立山黒部ジオパーク</a>。測量点の保証なし。</small>
- </div><p data-status class="fieldMessage" aria-live="polite">被写体を指定してください。</p>
+ </div><p data-status class="fieldMessage" aria-live="polite">被写体を指定してください。</p><button data-retry hidden>再試行</button>
  <div data-result hidden>
  <div data-values class="dataGrid"></div>
  <p class="muted">日照時間帯はメインのタイムラインに表示します。</p></div>`;
  const $=q=>root.querySelector('[data-'+q+']');
- let worker=null,requestId=0,target=null,profile=null,analysis=null,desiredDate=null,minute=900,pending=false,resultDate=null,lastRender='';
- const status=s=>{$('status').textContent=s;onTimeline()};
+ let worker=null,requestId=0,target=null,profile=null,analysis=null,desiredDate=null,minute=900,pending=false,resultDate=null,lastRender='',failed=false;
+ const status=s=>{$('status').textContent=s;$('retry').hidden=!failed;onTimeline()};
  const clear=()=>{profile=null;analysis=null;resultDate=null;lastRender='';$('result').hidden=true};
- function fail(message){pending=false;clear();status('日照計算失敗：'+message)}
- function request(){
+ function fail(message){pending=false;failed=true;clear();status('日照計算失敗：'+message)}
+ function request(force=false){
   if(!target||!desiredDate)return;
   try{
    if(!worker){worker=workerFactory();worker.onmessage=e=>{
@@ -34,12 +34,12 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
     if(m.type==='light'){
      profile=m.profile;analysis=m.analysis;resultDate=m.date;
      if(resultDate!==desiredDate){request();return;}
-     status('裸地DEM '+profile.source+' · 取得率 '+(profile.coverage*100).toFixed(1)+'% · モデル概算');
+     failed=profile.failedTiles>0||profile.coverage<.999;status('裸地DEM '+profile.source+' · 取得率 '+(profile.coverage*100).toFixed(1)+'% · モデル概算'+(profile.failedTiles>0?' · 通信失敗 '+profile.failedTiles+' 件':failed?' · 欠損あり':''));
      render();
     }
    };worker.onerror=e=>{worker?.terminate();worker=null;fail(e.message||'Workerエラー')};}
-   pending=true;clear();status('被写体の地形・日照計算中…');
-   worker.postMessage({mode:'light',id:++requestId,lat:target.lat,lon:target.lon,date:desiredDate});
+   pending=true;failed=false;clear();status('被写体の地形・日照計算中…');
+   worker.postMessage({mode:'light',id:++requestId,lat:target.lat,lon:target.lon,date:desiredDate,force});
   }catch(e){fail(e.message||String(e))}
  }
  function select(lat,lon){
@@ -72,7 +72,8 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{}
  $('pick').onclick=()=>onPick?.();
  $('current').onclick=()=>{const p=getObserver();select(p.lat,p.lon)};
  $('preset').onclick=()=>select(36.5725646,137.6175013);
- return {select,invalidate(){requestId++;worker?.terminate();worker=null;target=null;pending=false;clear();status('被写体位置更新中…')},track(date){return {target,analysis:resultDate===date?analysis:null,pending:pending||!!target&&resultDate!==date&&!$('status').textContent.startsWith('日照計算失敗'),error:$('status').textContent.startsWith('日照計算失敗')}} ,sync(date,m){
+ $('retry').onclick=()=>request(true);
+ return {select,retry(){request(true)},acquisition(){return {pending,failed,message:$('status').textContent}},invalidate(){failed=false;requestId++;worker?.terminate();worker=null;target=null;pending=false;clear();status('被写体位置更新中…')},track(date){return {target,analysis:resultDate===date?analysis:null,pending:pending||!!target&&resultDate!==date&&!$('status').textContent.startsWith('日照計算失敗'),error:$('status').textContent.startsWith('日照計算失敗')}} ,sync(date,m){
   const changed=date!==desiredDate;desiredDate=date;minute=m;
   if(changed&&target&&!pending)request();
   else if(changed&&pending){$('result').hidden=true;onTimeline()}
