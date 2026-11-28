@@ -3,7 +3,7 @@ import {targetDirection,finiteLOS,reverseCandidates,evaluateAlignment} from './l
 import {sampleElevationBatch} from './terrain-store.mjs';
 
 const LIMIT=2400,MAX_VERIFY=64;
-const near=(lat,lon)=>({lat,lon,detail:'near'});
+const endpoint=(lat,lon)=>({lat,lon,detail:'fine'});
 const isNum=Number.isFinite;
 const validPoint=p=>p&&isNum(p.lat)&&isNum(p.lon)&&p.lat>=20&&p.lat<=46&&p.lon>=122&&p.lon<=154;
 function at(p,az,d,detail){const [lat,lon]=destination(p.lat,p.lon,az,d);return {lat,lon,detail}}
@@ -34,7 +34,7 @@ export async function searchSubjectLocations(req,options={}){
  if(count>LIMIT)throw Error('候補点数が多すぎます。日数・時間幅・距離を縮めてください（最大'+LIMIT+'点）');
  const raw=dates.flatMap(date=>times.flatMap(minute=>reverseCandidates(req.subject,date,minute,{minM,maxM,radialStep}).map(p=>({...p,date,minute}))));
  ctx.onProgress('撮影候補の標高取得 '+raw.length+'点');
- const heights=await ctx.sample([near(req.subject.lat,req.subject.lon),...raw.map(p=>near(p.lat,p.lon))]);
+ const heights=await ctx.sample([endpoint(req.subject.lat,req.subject.lon),...raw.map(p=>endpoint(p.lat,p.lon))]);
  if(!isNum(heights[0]))return {kind:'G5',status:'unknown',reason:'被写体標高未取得',sampled:raw.length,results:[],missing:raw.length};
  const target={...req.subject,height:heights[0]+req.subjectHeight};
  let missing=0;const candidates=[];
@@ -46,7 +46,7 @@ export async function searchSubjectLocations(req,options={}){
  const chosen=candidates.slice(0,MAX_VERIFY),points=[],jobs=[];
  for(const c of chosen){
   const ds=lineSampleDistances(c.align.target.distance),start=points.length;
-  for(const d of ds)points.push(at(c.observer,c.align.target.az,d,d<2000||c.align.target.distance-d<500?'near':'mid'));
+  for(const d of ds)points.push(at(c.observer,c.align.target.az,d,d<100||c.align.target.distance-d<50?'fine':d<2000||c.align.target.distance-d<500?'near':'mid'));
   jobs.push({c,ds,start});
  }
  ctx.onProgress('被写体への有限視線を検証 '+chosen.length+'点');
@@ -96,7 +96,7 @@ export async function searchHorizonLocations(req,options={}){
  const raw=[];
  for(let n=-Math.floor(radius/step)*step;n<=radius+1e-8;n+=step)for(let e=-Math.floor(radius/step)*step;e<=radius+1e-8;e+=step){const d=Math.hypot(n,e);if(d>radius)continue;const [lat,lon]=destination(req.center.lat,req.center.lon,Math.atan2(e,n)/DEG,d);if(validPoint({lat,lon}))raw.push({lat,lon})}
  ctx.onProgress('候補の標高取得 '+raw.length+'点');
- const ground=await ctx.sample(raw.map(p=>near(p.lat,p.lon))),points=[],jobs=[],results=[];
+ const ground=await ctx.sample(raw.map(p=>endpoint(p.lat,p.lon))),points=[],jobs=[],results=[];
  for(let i=0;i<raw.length;i++){
   const p=raw[i],eye=ground[i]+req.eyeHeight;
   if(!isNum(eye)){results.push({...p,status:'unknown',reason:'地表標高未取得'});continue}
