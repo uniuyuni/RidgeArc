@@ -3,7 +3,7 @@
 export const SNAPSHOT_KEY='ridgearc.field.snapshots.v1';
 const finite=(v,a,b)=>typeof v==='number'&&Number.isFinite(v)&&v>=a&&v<=b;
 const bool=v=>typeof v==='boolean';
-const day=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&v>='1901-01-01'&&v<='2098-12-31'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
+const day=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&v>='1900-01-01'&&v<='2099-12-31'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
 const point=p=>p&&finite(p.lat,20,46)&&finite(p.lon,122,154);
 const list=(v,allowed)=>Array.isArray(v)&&v.every(x=>allowed.includes(x));
 const layers=['太陽','太陽の軌跡','遮蔽中の太陽・軌跡','距離色','稜線輪郭','地平線','日照・陰影'];
@@ -14,7 +14,7 @@ export function validateSnapshot(s){
  if(!v||!finite(v.az,0,360)||!finite(v.pitch,-65,75)||!finite(v.fov,5,180)||!u||!['map','both','ridge'].includes(u.page)||!finite(u.split,.2,.8)||!list(u.layers,layers)||!list(u.tracks,tracks)||!['scale','off'].includes(u.compass)||!bool(u.coordinates)||!bool(u.loupe)||!bool(u.splitLoupe)||!u.sun||!['minimum','marker','glow'].every(k=>bool(u.sun[k])))throw Error('スナップショットの表示設定が不正です');
  if(m&&(!finite(m.lat,-85,85)||!finite(m.lon,-540,540)||!finite(m.zoom,0,18)))throw Error('地図設定が不正です');
  if(!t||!day(t.start)||!day(t.end)||t.start>t.end||s.date<t.start||s.date>t.end||Date.parse(t.end)-Date.parse(t.start)>732*86400000||!finite(t.days,1/1440,733)||!bool(t.expanded)||!bool(t.lockTime))throw Error('タイムライン設定が不正です');
- if(!q||!bool(q.active)||!['sun'].includes(q.body)||!(q.start===null||day(q.start))||![31,92,183,366].includes(q.span)||!['future','around'].includes(q.direction)||!finite(q.days,1/24,733)||!finite(q.center,-30000,60000)||!(q.target===null||(finite(q.target?.az,0,360)&&finite(q.target?.alt,-90,90))))throw Error('探索設定が不正です');
+ if(!q||!bool(q.active)||!['sun'].includes(q.body)||!(q.start===null||day(q.start))||![31,92,183,366].includes(q.span)||!['future','both'].includes(q.direction)||!finite(q.days,1/24,733)||!finite(q.center,-30000,60000)||!(q.target===null||(finite(q.target?.az,0,360)&&finite(q.target?.alt,-90,90))))throw Error('探索設定が不正です');
  // Copy only recognized fields. Never restore markup, arbitrary keys or caches.
  return {version:1,observer:{lat:s.observer.lat,lon:s.observer.lon,height:s.observer.height},subject:{lat:s.subject.lat,lon:s.subject.lon,locked:s.subject.locked,distance:s.subject.distance},date:s.date,minute:s.minute,view:{az:v.az,pitch:v.pitch,fov:v.fov},map:m?{lat:m.lat,lon:m.lon,zoom:m.zoom}:null,ui:{page:u.page,split:u.split,layers:[...new Set(u.layers)],tracks:[...new Set(u.tracks)],compass:u.compass,coordinates:u.coordinates,loupe:u.loupe,splitLoupe:u.splitLoupe,sun:{minimum:u.sun.minimum,marker:u.sun.marker,glow:u.sun.glow}},timeline:{start:t.start,end:t.end,days:t.days,expanded:t.expanded,lockTime:t.lockTime},search:{active:q.active,body:q.body,start:q.start,span:q.span,direction:q.direction,days:q.days,center:q.center,target:q.target?{az:q.target.az,alt:q.target.alt}:null}};
 }
