@@ -1,0 +1,23 @@
+name: Verify GSI mountain catalogue
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/mountain-catalog.yml'
+      - 'scripts/import-mountains.mjs'
+      - 'public/data/gsi-mountains.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  catalogue:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read official CSV
+        run: |
+          curl -fL --retry 2 --max-time 45 https://www.gsi.go.jp/KOKUJYOHO/MOUNTAIN/1003zan20260331.csv -o /tmp/mountains.csv
+          node --input-type=module -e 'import fs from "node:fs"; const bytes=fs.readFileSync("/tmp/mountains.csv"); let s; try{s=new TextDecoder("utf-8",{fatal:true}).decode(bytes)}catch{s=new TextDecoder("shift_jis").decode(bytes)} console.log("CSV_SAMPLE",JSON.stringify(s.split(/\r?\n/).slice(0,5))); console.log("CSV_ROWS",s.split(/\r?\n/).length);'
+          if [ -f scripts/import-mountains.mjs ]; then node scripts/import-mountains.mjs /tmp/mountains.csv /tmp/mountains.json; fi
