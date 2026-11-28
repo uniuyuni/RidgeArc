@@ -124,28 +124,37 @@ try{
  assert.equal(await page.locator('#ridge').evaluate(el=>el.parentElement.contains(document.querySelector('#fieldAcquisition'))),false);
  assert.ok((await page.locator('#fieldAcquisition').boundingBox()).height<=26);
  assert.match(await page.locator('header .demo').innerText(),/0\.6\.1/);
- // Verify that the actual canvas selection also changes dates. Zoom to a single candidate.
+ // Exercise a different actual result through the canvas (not just the list).
+ const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
+ assert.ok(otherLabel,'fixture must contain two distinct dates');
  await page.setViewportSize({width:412,height:844});
  await page.waitForTimeout(250);
- const cv=page.locator('#timeCanvas');
- const box=await cv.boundingBox();
+ const cv=page.locator('#timeCanvas'),box=await cv.boundingBox();
  const base=Date.parse('2026-12-01T00:00:00Z')/86400000;
- const day=Date.parse(label.slice(0,10)+'T00:00:00Z')/86400000;
- const [hh,mm]=label.slice(11,16).split(':').map(Number);
- const value=day+(hh*60+mm)/1440;
- // Annual/current range can have several candidates; click the cluster and allow zoom.
- const x=box.width/2+(value-(base+(Date.parse('2027-01-02T00:00:00Z')/86400000-base)/2))*box.width/32;
- await cv.click({position:{x:Math.max(1,Math.min(box.width-1,x)),y:40}});
- await page.waitForTimeout(400);
- // The list remains a direct, unambiguous path even if several dates overlap.
- if(await page.locator('#labSearchbar').isVisible()){
-  await page.locator('#labCandidates').click();
-  const other=page.locator('#sheetBody .eventRow button').filter({hasNotText:label.slice(0,10)}).first();
-  assert.ok(await other.count());
-  const otherLabel=await other.innerText();await other.click();
-  assert.equal(await page.locator('#date').inputValue(),otherLabel.slice(0,10));
-  assert.equal((await page.locator('#clock').innerText()).trim(),otherLabel.slice(11,16));
- }
+ const endDay=Date.parse('2027-01-02T00:00:00Z')/86400000;
+ const days=endDay-base,center=(base+endDay)/2;
+ const day=Date.parse(otherLabel.slice(0,10)+'T00:00:00Z')/86400000;
+ const [hours,minutes]=otherLabel.slice(11,16).split(':').map(Number);
+ const value=day+(hours*60+minutes)/1440;
+ // Drag the desired candidate into the centre, then zoom to a single day.
+ const dx=(center-value)*box.width/days;
+ const startX=box.x+box.width/2-dx/2;
+ const y=box.y+40;
+ await page.mouse.move(startX,y);await page.mouse.down();
+ await page.mouse.move(startX+dx,y,{steps:10});await page.mouse.up();
+ await page.mouse.move(box.x+box.width/2,y);
+ await page.mouse.wheel(0,Math.log(1/days)/.002);
+ await page.waitForTimeout(150);
+ await cv.click({position:{x:box.width/2,y:40}});
+ await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
+ assert.equal(await page.locator('#labNormalTimebar').isVisible(),true);
+ assert.equal(await page.locator('#date').inputValue(),otherLabel.slice(0,10));
+ assert.equal((await page.locator('#clock').innerText()).trim(),otherLabel.slice(11,16));
+ // Range must include the chosen day even when it started outside the initial interval.
+ await page.locator('#tracks').click();
+ const lo=await page.locator('#rangeStart').inputValue(),hi=await page.locator('#rangeEnd').inputValue();
+ assert.ok(lo<=otherLabel.slice(0,10)&&otherLabel.slice(0,10)<=hi);
+ await page.locator('#close').click();
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
 }finally{await browser?.close();await new Promise(r=>server.close(r))}
