@@ -37,6 +37,18 @@ try{
  await page.goto('http://127.0.0.1:'+server.address().port+'/field/');
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
  console.log('observer:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),Date.now()-start+'ms');
+ // Verify the shipped initial coastal observer and small-island subject, not just a synthetic inland fixture.
+ assert.match(await page.locator('.observerLabLabel').innerText(),/雨晴海岸/);
+ assert.match(await page.locator('.subjectLabLabel').innerText(),/女岩/);
+ assert.equal(await page.locator('.subjectLockButton').getAttribute('aria-pressed'),'true');
+ const initialGround=await page.locator('#fieldAcquisition').getAttribute('data-detail');
+ if(!initialGround.includes('通信失敗'))assert.equal(await page.locator('#fieldAcquisition').getAttribute('data-phase'),'done','expected DEM no-data must not require retry');
+ await page.waitForFunction(()=>/^(裸地DEM |日照計算失敗)/.test(document.querySelector('[data-status]')?.textContent),null,{timeout:live?180000:90000});
+ const initialSubject=await page.locator('[data-status]').textContent();
+ console.log('initial Onna-iwa:',initialSubject);
+ assert.match(initialSubject,/^裸地DEM /,'initial island ground must resolve');
+ if(!initialSubject.includes('通信失敗'))assert.equal(await page.locator('[data-retry]').isHidden(),true,'expected DEM gaps must not trigger retry');
+
  await page.locator('[data-sheet=info]').click();
  await page.locator('[data-preset]').click();
  await page.waitForFunction(()=>/^裸地DEM /.test(document.querySelector('[data-status]')?.textContent),null,{timeout:live?180000:90000});
@@ -159,7 +171,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.7/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.7\.1/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
