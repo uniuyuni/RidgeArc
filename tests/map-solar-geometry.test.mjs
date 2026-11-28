@@ -1,30 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mapSolarPath} from '../public/map-solar-geometry.mjs';
-import {sunPosition,angleDelta} from '../public/core.mjs';
-import {targetDirection} from '../public/location-geometry.mjs';
-
-const observer={lat:36.81668,lon:137.03949,height:0};
-test('map arc is the actual JST solar bearing, not a ground path',()=>{
- const a=mapSolarPath('2026-11-30',observer,1000,423);
- assert.ok(a.segments.length>=1&&a.hours.length>0);
- const sun=sunPosition('2026-11-30',423,observer.lat,observer.lon);
- assert.equal(a.current.az,sun.az);assert.equal(a.current.alt,sun.alt);
- for(const p of [a.current,...a.hours,...a.segments.flat().filter((_,i)=>i%60===0)]){
-  const dir=targetDirection(observer,{lat:p.point[0],lon:p.point[1],height:0});
-  assert.ok(Math.abs(angleDelta(dir.az,p.az))<1e-7);
-  assert.ok(Math.abs(dir.distance-1000)<1e-5);
+import {projectSky,skyDomePath,domeRadius,seasonalDates} from '../public/map-solar-geometry.mjs';
+import {sunPosition,DEG} from '../public/core.mjs';
+const observer={lat:36.81668,lon:137.03949};
+test('orthographic hemisphere has north up, horizon unit radius and a unique zenith',()=>{
+ for(const az of [0,90,180,270,359.99]){
+  const h=projectSky(az,0),z=projectSky(az,90),m=projectSky(az,60);
+  assert.ok(Math.abs(Math.hypot(h.x,h.y)-1)<1e-12);
+  assert.ok(Math.hypot(z.x,z.y)<1e-12);
+  assert.ok(Math.abs(Math.hypot(m.x,m.y)-.5)<1e-12);
  }
- assert.ok(a.segments.flat().every(p=>p.aboveReference));
- const night=mapSolarPath('2026-11-30',observer,1000,0);
- assert.equal(night.current.aboveReference,false);
+ assert.ok(projectSky(0,0).y<0&&projectSky(90,0).x>0);
 });
-test('radius changes only the symbolic map distance; day and minute change the direction',()=>{
- const a=mapSolarPath('2026-11-30',observer,100,423);
- const b=mapSolarPath('2026-11-30',observer,5000,423);
- assert.equal(a.current.az,b.current.az);assert.notDeepEqual(a.current.point,b.current.point);
- const later=mapSolarPath('2026-11-30',observer,100,540);
- assert.notEqual(a.current.az,later.current.az);
- const summer=mapSolarPath('2026-06-21',observer,100,423);
- assert.notEqual(a.current.az,summer.current.az);
+test('sun path uses physical solar altitude and azimuth and crosses horizon without gaps',()=>{
+ const date='2026-11-30',path=skyDomePath(date,observer,423);
+ const s=sunPosition(date,423,observer.lat,observer.lon);
+ assert.equal(path.current.az,s.az);assert.equal(path.current.alt,s.alt);
+ assert.ok(path.segments.length>0&&path.hours.length>0);
+ for(const p of path.segments.flat())assert.ok(p.alt>=0&&Math.hypot(p.x,p.y)<=1+1e-12);
+ for(const segment of path.segments)for(const p of [segment[0],segment.at(-1)])assert.ok(Math.abs(Math.hypot(p.x,p.y)-1)<1e-9);
+ assert.ok(skyDomePath(date,observer,0).current.alt<0);
+ const summer=skyDomePath('2026-06-21',observer,720);
+ assert.ok(Math.hypot(summer.current.x,summer.current.y)<Math.hypot(path.current.x,path.current.y));
+});
+test('polar summer is a near-circular path, zenith projection never jumps by azimuth',()=>{
+ const p=skyDomePath('2026-06-21',{lat:89.999,lon:0},720);
+ assert.equal(p.segments.length,1);
+ assert.ok(p.segments[0].length===1441);
+ const rs=p.segments[0].map(p=>Math.hypot(p.x,p.y));assert.ok(Math.max(...rs)-Math.min(...rs)<.005);
+ const a=projectSky(0,89.999),b=projectSky(180,89.999);
+ assert.ok(Math.hypot(a.x-b.x,a.y-b.y)<.00004);
+});
+test('dome fills shortest map dimension with a label margin; seasonal dates are representative',()=>{
+ assert.equal(domeRadius(900,600),282);assert.equal(domeRadius(600,900),282);
+ assert.equal(seasonalDates('2027-02-02')[0].date,'2027-06-21');
 });
