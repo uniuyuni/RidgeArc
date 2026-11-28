@@ -159,15 +159,16 @@ try{
  assert.ok(fades.every((v,i)=>i===0||v>fades[i-1]),'actual halo pixel changes continuously with visibility');
  const smooth=await page.evaluate(async()=>{
   const {makeTerrainTexture}=await import('/field-engine.mjs');
-  const a={segments:[{hi:1/11,m:1,b:-100,d:110,near:90}],water:[]};
-  const b={segments:[{hi:1/11,m:1,b:-1000,d:1100,near:900}],water:[]};
+  const a={segments:[{hi:1/11,m:1,b:-300,d:330,near:270}],water:[]};
+  const b={segments:[{hi:1/11,m:1,b:-8000,d:8800,near:7200}],water:[]};
   const profile={ground:0,height:1.6,total:Array(1440).fill(Math.atan(1/11)*180/Math.PI),surfaces:Array.from({length:1440},(_,i)=>i%2?b:a)};
   const c=makeTerrainTexture(profile,{az:.125,pitch:0,fov:.25},100,40).getContext('2d');
   const pixels=c.getImageData(0,20,100,1).data;
   const red=Array.from({length:100},(_,i)=>pixels[i*4]);
   return {span:red.at(-1)-red[0],jump:Math.max(...red.slice(1).map((v,i)=>Math.abs(v-red[i])))};
  });
- assert.ok(smooth.span>15&&smooth.jump<=3,'zoomed angular samples must not produce blocky nearest-ray color jumps');
+ console.log('Terrain angular color gradient:',JSON.stringify(smooth));
+ assert.ok(smooth.span>15&&smooth.jump<=3,'zoomed angular samples must not produce blocky nearest-ray color jumps: '+JSON.stringify(smooth));
  // Actual loupe opens with the same real solar position used for target selection.
  const currentRidge=page.locator('#ridge'),currentRect=await currentRidge.boundingBox();
  // Directly selecting a known trajectory point avoids changing the camera.
