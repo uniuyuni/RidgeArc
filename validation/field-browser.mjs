@@ -34,6 +34,12 @@ try{
  const page=await context.newPage(),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
  const start=Date.now();
+ if(live)await page.addInitScript(()=>{
+  const RealWorker=window.Worker;
+  window.Worker=class extends RealWorker{
+   constructor(...args){super(...args);this.addEventListener('message',e=>{if(e.data.type==='profile')window.__terrainProfile=e.data})}
+  };
+ });
  await page.goto('http://127.0.0.1:'+server.address().port+'/field/');
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
  console.log('observer:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),Date.now()-start+'ms');
@@ -46,6 +52,22 @@ try{
  await page.waitForFunction(()=>/^(裸地DEM |日照計算失敗)/.test(document.querySelector('[data-status]')?.textContent),null,{timeout:live?180000:90000});
  const initialSubject=await page.locator('[data-status]').textContent();
  console.log('initial Onna-iwa:',initialSubject);
+ if(live){
+  const debug=await page.evaluate(async()=>{
+   const {surfaceAt}=await import('/coast-surface.mjs');
+   const p=window.__terrainProfile;
+   if(!p)return null;
+   const rows=[];
+   for(let az=108;az<=120;az+=.25){
+    const i=Math.round(az/.25),surface=p.surfaces[i];
+    const hits=surface.segments.filter(s=>s.d>450&&s.d<650);
+    if(hits.length||az%1===0)rows.push({az,peak:surface.peak,hits,probe:[-.3,0,.3,.6,1,1.5,2].map(a=>({a,hit:surfaceAt(surface,Math.tan(a*Math.PI/180),p.ground+p.height)}))});
+   }
+   return {ground:p.ground,height:p.height,rows};
+  });
+  console.log('ISLAND FIELD',JSON.stringify(debug));
+ }
+
  assert.match(initialSubject,/^裸地DEM /,'initial island ground must resolve');
  if(!initialSubject.includes('通信失敗'))assert.equal(await page.locator('[data-retry]').isHidden(),true,'expected DEM gaps must not trigger retry');
 
