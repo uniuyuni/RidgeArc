@@ -46,6 +46,20 @@ export function linearToDisplay(v,exposure=20){
  return Math.round(255*(t<=.0031308?12.92*t:1.055*t**(1/2.4)-.055));
 }
 export function skyRGB(args){return skyRadiance(args).map(v=>linearToDisplay(v))}
+export function surfaceIrradiance({sunAz,sunAlt,height=0,normal,direct}){
+ const radius=R+clamp(height,0,TOP-1),mu=Math.sin(rad(sunAlt)),blocked=mu<0&&radius*radius*(1-mu*mu)<=R*R;
+ const depth=blocked?null:integrateDepth(radius,mu,exitDistance(radius,mu),SUN_STEPS);
+ const beam=BETA_R.map(beta=>depth?Math.exp(-beta*depth[0]-BETA_M*depth[1])*Math.max(0,direct):0);
+ // Two Gauss nodes in sin(alt), four azimuths: coarse hemispheric sky
+ // integral with cosine incidence. No measured sky-view mask yet.
+ const diffuse=[0,0,0];
+ for(const u of [.2113248654,.7886751346])for(const az of [0,90,180,270]){
+  const alt=Math.asin(u)/DEG,a=rad(az),c=Math.sqrt(1-u*u),inc=Math.max(0,normal[0]*c*Math.sin(a)+normal[1]*c*Math.cos(a)+normal[2]*u);
+  const sky=skyRadiance({az,alt,sunAz,sunAlt,height});
+  for(let k=0;k<3;k++)diffuse[k]+=sky[k]*inc*Math.PI/4;
+ }
+ return {direct:beam,diffuse};
+}
 export function lightDirection(observer,subject,sun){
  const p=subject.lat*DEG,q=observer.lat*DEG,l=(observer.lon-subject.lon)*DEG;
  const az=Math.atan2(Math.sin(l)*Math.cos(q),Math.cos(p)*Math.sin(q)-Math.sin(p)*Math.cos(q)*Math.cos(l))/DEG;
