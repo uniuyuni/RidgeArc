@@ -392,6 +392,12 @@ try{
   await lab.locator('#run').click();await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:180000});
   const subjectStatus=await lab.locator('#status').innerText();console.log('LIVE G5:',subjectStatus,await lab.locator('#results').innerText());
   assert.match(subjectStatus,/候補 5点/);
+  // Inland fixture: a deliberately elevated target, not a real named structure.
+  await lab.locator('#subjectLat').fill('35.68');await lab.locator('#subjectLon').fill('139.75');
+  await lab.locator('#subjectHeight').fill('35');
+  await lab.locator('#run').click();await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:180000});
+  console.log('LIVE inland G5:',await lab.locator('#status').innerText(),await lab.locator('#results').innerText());
+  assert.ok(await lab.locator('#results article').count()>0,'real inland candidate elevations must reach the verification path');
   await lab.locator('#kind').selectOption('G4');await lab.locator('#radius').fill('100');await lab.locator('#gridStep').fill('250');
   await lab.locator('#run').click();await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:180000});
   console.log('LIVE G4:',await lab.locator('#status').innerText(),await lab.locator('#results').innerText());
