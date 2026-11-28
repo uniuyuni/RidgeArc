@@ -51,8 +51,16 @@ try{
  assert.ok(full.h>split.h);
  assert.ok(Math.abs(split.ratio-full.ratio)<1e-12,'aspect invariant');
  const snap=await page.evaluate(()=>({az:state.az,fov:state.fov,lat:state.lat,lon:state.lon,date:document.querySelector('#date').value,time:state.time}));
+ const beforeMode=await page.evaluate(()=>{const r=document.querySelector('#stage').getBoundingClientRect(),t=document.querySelector('.timeline').getBoundingClientRect();return {stage:[r.x,r.y,r.width,r.height],timeline:[t.x,t.y,t.width,t.height]}});
  await page.locator('[data-sheet=search]').tap();
  assert.equal(await page.locator('#labSearchbar').isVisible(),true);
+ assert.equal(await page.evaluate(()=>getComputedStyle(document.querySelector('#labTimelineClip')).overflow),'hidden');
+ assert.ok(await page.evaluate(()=>document.querySelector('.labTimelineGhost')!==null));
+ await page.waitForFunction(()=>labModeMotion===null);
+ const afterMode=await page.evaluate(()=>{const r=document.querySelector('#stage').getBoundingClientRect(),t=document.querySelector('.timeline').getBoundingClientRect();return {stage:[r.x,r.y,r.width,r.height],timeline:[t.x,t.y,t.width,t.height]}});
+ assert.deepEqual(afterMode,beforeMode,'mode transition must not resize the landscape or timeline');
+ assert.ok(await page.evaluate(()=>document.querySelector('.labDateField').offsetWidth<document.querySelector('#labSearchPeriod').offsetWidth));
+
  assert.equal(await page.locator('#labNormalTimebar').isVisible(),false);
  assert.equal(await page.locator('[data-sheet=search]').getAttribute('aria-pressed'),'true');
  assert.equal(await page.locator('#app').evaluate(el=>el.classList.contains('labSearchActive')),true);
