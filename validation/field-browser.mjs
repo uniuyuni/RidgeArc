@@ -269,6 +269,21 @@ try{
  console.log('Vector terrain:',JSON.stringify(vector));
  assert.ok(vector.center[0]<vector.left[0]-15&&vector.center[0]<vector.right[0]-15,'foreground polygon survives in front of distant terrain');
  assert.ok(vector.colors<15,'polygons must not smear colors across angular samples');
+ // Exercise the experimental raster with real canvas pixels at several eye heights.
+ const rayCheck=await page.evaluate(async()=>{
+  const {makeTerrainTexture}=await import('/field-engine.mjs');
+  const output=[];
+  for(const height of [1.6,5.4,10]){
+   const p={ground:0,height,total:Array(1440).fill(0),surfaces:Array.from({length:1440},(_,i)=>({segments:[],water:[[10,i%2?5000:3000]]}))};
+   const view={renderer:'ray',az:0,pitch:Math.atan(-.02)*180/Math.PI,fov:5},w=400,h=240;
+   const canvas=makeTerrainTexture(p,view,w,h),c=canvas.getContext('2d'),row=c.getImageData(0,120,w,1).data;
+   const colors=new Set(Array.from({length:w},(_,i)=>Array.from(row.slice(i*4,i*4+4)).join(',')));
+   output.push({colors:colors.size,alpha:row[3],blue:row[2],ms:Number(canvas.dataset.renderMs)});
+  }
+  return output;
+ });
+ console.log('Reference ray renderer:',JSON.stringify(rayCheck));
+ assert.ok(rayCheck.every(r=>r.colors===1&&r.alpha===255&&r.blue>110&&Number.isFinite(r.ms)),'reference sea has no cracks at changing eye heights');
  // A planar sea shared by adjacent rays must not have holes when the
  // verified range ends differ. Exercise the actual canvas, not just keys.
  const seaContinuity=await page.evaluate(async()=>{

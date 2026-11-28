@@ -10,7 +10,7 @@ export function createSceneLight(onChange,workerFactory=()=>new Worker(new URL('
    if(key){stop();key='';geometry=null;result=null;ambient=null;status='';}
    return null;
   }
-  const gkey=[revision,view.lat,view.lon,view.az,view.pitch,view.fov,w,h].join('/');
+  const gkey=[revision,view.lat,view.lon,view.az,view.pitch,view.fov,view.renderer,w,h].join('/');
   const minute=Math.floor(view.time*60),next=[gkey,date,minute].join('/');
   if(next!==key){
    stop();key=next;result=null;ambient={key:next+'/ambient',ambient:ambientReference(sunPosition(date,minute,view.lat,view.lon),profile.ground+profile.height)};status='日照概算：計算準備中';pending=true;
