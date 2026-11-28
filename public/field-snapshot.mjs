@@ -6,7 +6,7 @@ const bool=v=>typeof v==='boolean';
 const day=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&v>='1900-01-01'&&v<='2099-12-31'&&Number.isFinite(Date.parse(v))&&new Date(v).toISOString().slice(0,10)===v;
 const point=p=>p&&finite(p.lat,20,46)&&finite(p.lon,122,154);
 const list=(v,allowed)=>Array.isArray(v)&&v.every(x=>allowed.includes(x));
-const layers=['太陽','太陽の軌跡','遮蔽中の太陽・軌跡','距離色','稜線輪郭','地平線','日照・陰影'];
+const layers=['太陽','太陽の軌跡','遮蔽中の太陽・軌跡','距離色','稜線輪郭','地平線','日照・陰影','山名・標高','薄明・空色'];
 const tracks=['太陽可視','被写体の日照'];
 export function validateSnapshot(s){
  if(!s||s.version!==1||!point(s.observer)||!finite(s.observer.height,0,300)||!point(s.subject)||!bool(s.subject.locked)||!finite(s.subject.distance,0,4000000)||!day(s.date)||!finite(s.minute,0,1439)||!Number.isInteger(s.minute))throw Error('スナップショットの地点・日時が不正です');

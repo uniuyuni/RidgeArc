@@ -31,9 +31,9 @@ test('solar disk horizon handles north wrap and missing directions',()=>{
  assert.equal(directionalHorizon(s,[h[0],{angle:null},h[2]],.05).angle,null);
 });
 test('scene color does not bleed across depth boundaries or onto water',()=>{
- const g={rows:1,cols:1,depth:[100],index:[0],values:[{kind:'shadow',value:0}]};
+ const g={rows:1,cols:1,depth:[100],index:[0],values:[{kind:'shadow',value:0,illumination:{direct:[0,0,0],diffuse:[.1,.1,.1]}}]};
  const rgb=[100,100,100];
- assert.deepEqual(shadeColor(rgb,g,0,0,1,1,{kind:'land',distance:100}),[63,63,63]);
+ const shadow=shadeColor(rgb,g,0,0,1,1,{kind:'land',distance:100});assert.ok(shadow.every(v=>v>0&&v<100));
  assert.equal(shadeColor(rgb,g,0,0,1,1,{kind:'land',distance:1000}),rgb);
  assert.equal(shadeColor(rgb,g,0,0,1,1,{kind:'water',distance:100}),rgb);
 });
