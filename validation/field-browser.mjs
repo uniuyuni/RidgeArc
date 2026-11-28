@@ -226,6 +226,19 @@ try{
  console.log('Vector terrain:',JSON.stringify(vector));
  assert.ok(vector.center[0]<vector.left[0]-15&&vector.center[0]<vector.right[0]-15,'foreground polygon survives in front of distant terrain');
  assert.ok(vector.colors<15,'polygons must not smear colors across angular samples');
+ // A planar sea shared by adjacent rays must not have holes when the
+ // verified range ends differ. Exercise the actual canvas, not just keys.
+ const seaContinuity=await page.evaluate(async()=>{
+  const {makeTerrainTexture,project}=await import('/field-engine.mjs');
+  const p={ground:0,height:1.6,total:Array(1440).fill(1),surfaces:Array.from({length:1440},(_,i)=>({segments:[],water:[[10,i%2?5000:3000]]}))};
+  const view={az:116.6,pitch:-.3,fov:5},w=400,h=240,c=makeTerrainTexture(p,view,w,h).getContext('2d');
+  const y=Math.floor(project(view.az,Math.atan(-.005)*180/Math.PI,view,w,h)[1]),pixels=c.getImageData(0,y,w,1).data;
+  const expected=[...pixels.slice(4,7)];let holes=0,distinct=new Set();
+  for(let x=2;x<w-2;x++){const rgb=[...pixels.slice(x*4,x*4+3)];distinct.add(rgb.join(','));if(rgb.some((v,k)=>Math.abs(v-expected[k])>3))holes++}
+  return {expected,holes,colors:distinct.size};
+ });
+ console.log('Shared sea continuity:',JSON.stringify(seaContinuity));
+ assert.ok(seaContinuity.expected[2]>110&&seaContinuity.holes===0,'same measured sea must not be broken into triangles');
  const smooth=await page.evaluate(async()=>{
   const {makeTerrainTexture}=await import('/field-engine.mjs');
   const far={hi:.08,m:.2,b:-960,d:8000,near:4800};
@@ -299,7 +312,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.10\.1/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.10\.2/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
@@ -363,6 +376,20 @@ try{
   const reopened=await shared.evaluate(async()=>{const {decodeSnapshot}=await import('/field-snapshot.mjs');return decodeSnapshot(new URL(document.querySelector('#snapshotLink').value).hash.slice(10))});
   assert.deepEqual(reopened,saved.state,'share URL restores composition on new page');
   await shared.close();
+  const mapLab=await context.newPage();
+  const mapErrors=[];mapLab.on('pageerror',e=>mapErrors.push(e.message));
+  await mapLab.goto('http://127.0.0.1:'+server.address().port+'/ui-lab/map-sun.html');
+  await mapLab.locator('.map-solar-time.current').waitFor();
+  assert.equal((await mapLab.locator('.map-solar-time.current').textContent()).trim(),'07:03');
+  assert.ok(await mapLab.locator('.map-solar-time:not(.current)').count()>0);
+  const before=await mapLab.locator('#readout').textContent();
+  await mapLab.locator('#minute').fill('540');await mapLab.locator('#minute').dispatchEvent('input');
+  assert.equal((await mapLab.locator('.map-solar-time.current').textContent()).trim(),'09:00');
+  assert.notEqual(await mapLab.locator('#readout').textContent(),before);
+  await mapLab.locator('#trajectory').uncheck();
+  assert.equal(await mapLab.locator('.map-solar-time:not(.current)').count(),0);
+  await mapLab.locator('#sun').uncheck();assert.equal(await mapLab.locator('.map-solar-time').count(),0);
+  assert.deepEqual(mapErrors,[]);await mapLab.close();
   const lab=await context.newPage();
   await lab.goto('http://127.0.0.1:'+server.address().port+'/ui-lab/location-search.html');
   await lab.locator('#kind').selectOption('G4');

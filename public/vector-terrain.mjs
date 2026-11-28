@@ -36,9 +36,16 @@ export function rayBands(surface,eye){
  }
  if(eye>0){
   const horizonDistance=Math.sqrt(2*R*eye),s=d=>-eye/d-d/(2*R);
+  // Every ray must use the same physical distance bins. Binning an entire
+  // water range by its midpoint makes identical water split into unrelated
+  // polygons when its far endpoint changes by even one DEM sample.
   for(const [start,end] of surface.water??[]){
-   const a=Math.max(2,start),b=Math.min(horizonDistance,end);
-   if(b>a)addInterval(out,'water',Math.sqrt(a*b),s(a),s(b));
+   const near=Math.max(2,start),far=Math.min(horizonDistance,end);
+   if(!(far>near))continue;
+   for(let k=bucket(near);k<=bucket(far);k++){
+    const a=Math.max(near,2*1.65**k),b=Math.min(far,2*1.65**(k+1));
+    if(b>a)addInterval(out,'water',Math.sqrt(a*b),s(a),s(b));
+   }
   }
  }
  return out;
@@ -48,19 +55,37 @@ export function rayBands(surface,eye){
 // Vertical bounds are still the observed angular extents on the sampled ray.
 export function connectBands(a,b,x0,x1){
  const result=[],mid=(x0+x1)/2;
- for(const key of new Set([...a.keys(),...b.keys()])){
-  const left=a.get(key)??[],right=b.get(key)??[],used=new Set();
-  const emit=(l,r)=>{const q=l??r;const d=q.distance;
-   const points=l&&r?[[x0,l.hi],[x1,r.hi],[x1,r.lo],[x0,l.lo]]:l?[[x0,l.hi],[mid,l.lo],[x0,l.lo]]:[[mid,r.lo],[x1,r.hi],[x1,r.lo]];
-   result.push({key,kind:q.kind,distance:d,points});
-  };
-  for(const l of left){
-   let best=-1,overlap=-Infinity;
-   for(let i=0;i<right.length;i++){if(used.has(i))continue;const r=right[i],v=Math.min(l.hi,r.hi)-Math.max(l.lo,r.lo);if(v>=0&&v>overlap){best=i;overlap=v}}
-   if(best>=0){used.add(best);emit(l,right[best])}else emit(l,null);
+ const left=[...a.values()].flat(),right=[...b.values()].flat(),used=new Set();
+ const emit=(l,r)=>{
+  const q=l??r,d=l&&r?Math.sqrt(l.distance*r.distance):q.distance;
+  const key=q.kind+':'+bucket(d);
+  // An unpaired water interval ends at the angular midpoint with its full
+  // measured vertical extent. Tapering a planar surface to a vertex makes
+  // holes/spikes extending all the way from the shoreline to the horizon.
+  const points=l&&r?[[x0,l.hi],[x1,r.hi],[x1,r.lo],[x0,l.lo]]:
+   q.kind==='water'?(l?[[x0,l.hi],[mid,l.hi],[mid,l.lo],[x0,l.lo]]:[[mid,r.hi],[x1,r.hi],[x1,r.lo],[mid,r.lo]]):
+   l?[[x0,l.hi],[mid,l.lo],[x0,l.lo]]:[[mid,r.lo],[x1,r.hi],[x1,r.lo]];
+  result.push({key,kind:q.kind,distance:d,points});
+ };
+ // Match water only within the same physical depth band; allow land across
+ // an adjacent bin if the measured angular extents actually overlap and
+ // the distances are compatible. This avoids a fake crack at a bin edge.
+ for(const l of left){
+  let best=-1,score=-Infinity;
+  for(let i=0;i<right.length;i++){
+   if(used.has(i))continue;
+   const r=right[i];if(l.kind!==r.kind)continue;
+   const ratio=Math.max(l.distance,r.distance)/Math.min(l.distance,r.distance);
+   if(l.kind==='water'?bucket(l.distance)!==bucket(r.distance):ratio>1.65)continue;
+   const overlap=Math.min(l.hi,r.hi)-Math.max(l.lo,r.lo);
+   if(overlap<=0)continue;
+   const union=Math.max(l.hi,r.hi)-Math.min(l.lo,r.lo);
+   const v=overlap/union-Math.log(ratio);
+   if(v>score){score=v;best=i}
   }
-  right.forEach((r,i)=>{if(!used.has(i))emit(null,r)});
+  if(best>=0){used.add(best);emit(l,right[best])}else emit(l,null);
  }
+ right.forEach((r,i)=>{if(!used.has(i))emit(null,r)});
  return result;
 }
 export function vectorTerrainTexture(profile,view,w,h,distanceColor=true,shade=null,pixelRatio=1,step=.25){

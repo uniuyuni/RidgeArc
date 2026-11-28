@@ -34,3 +34,32 @@ test('water polygon intervals are bounded by known ranges and sea horizon',()=>{
  assert.ok(bands.size>0);
  assert.ok([...bands.values()].flat().every(p=>p.kind==='water'&&p.hi<0));
 });
+
+test('water stays a continuous plane when adjacent measured ranges have different far endpoints',()=>{
+ const a=rayBands({segments:[],water:[[10,5000]]},1.6);
+ const b=rayBands({segments:[],water:[[10,3000]]},1.6);
+ const polys=connectBands(a,b,0,1);
+ assert.ok(polys.length>0);
+ assert.ok(polys.every(p=>p.kind==='water'&&p.points.length===4),'no triangular water caps');
+ const slope=-.005;
+ const cover=(x,s)=>polys.some(p=>{
+  const xs=p.points.map(q=>q[0]),min=Math.min(...xs),max=Math.max(...xs);
+  if(x<min||x>max)return false;
+  const hi=p.points[0][1]+(p.points[1][1]-p.points[0][1])*(x-min)/(max-min);
+  const lo=p.points[3][1]+(p.points[2][1]-p.points[3][1])*(x-min)/(max-min);
+  return s>=lo&&s<=hi;
+ });
+ for(let i=0;i<=100;i++)assert.ok(cover(i/100,slope),'confirmed common sea surface must not develop holes');
+});
+test('same land surface crossing a logarithmic depth bin is connected instead of tapered twice',()=>{
+ const a=new Map([['land:1',[{kind:'land',distance:100,lo:.01,hi:.02}]]]);
+ const b=new Map([['land:2',[{kind:'land',distance:105,lo:.011,hi:.021}]]]);
+ const p=connectBands(a,b,0,1);
+ assert.equal(p.length,1);assert.equal(p[0].points.length,4);
+});
+test('separate measured water ranges do not acquire a fabricated connecting interval',()=>{
+ const a=rayBands({segments:[],water:[[20,50],[200,300]]},1.6);
+ const b=rayBands({segments:[],water:[[20,50],[200,300]]},1.6);
+ const polys=connectBands(a,b,0,1);
+ assert.ok(polys.every(p=>p.points.every(q=>q[1]<-.02||q[1]>-.01)));
+});

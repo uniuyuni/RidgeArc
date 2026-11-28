@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RidgeArc UI Lab — 太陽の地図方位</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#1c2832;color:#e8e5df;font:14px system-ui,sans-serif;display:flex;flex-direction:column;height:100dvh}header{padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}header strong{font-size:20px}header a{color:#ead1a3}#map{flex:1;min-height:160px}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;padding:10px 14px}.controls label{display:flex;align-items:center;gap:6px}input{color:inherit;background:#26343e;border:1px solid #60717c;border-radius:5px;padding:5px}input[type=range]{accent-color:#c5ab83;max-width:55vw}p{margin:0;padding:0 14px 10px;font-size:12px;color:#b2bfc8}#readout{font-variant-numeric:tabular-nums;color:#ead1a3}.map-solar-time{font:bold 11px system-ui,sans-serif;color:#fff5dd;text-align:center;text-shadow:0 1px 2px #26343e,1px 0 #26343e,-1px 0 #26343e,0 -1px #26343e;pointer-events:none;transform-origin:center}.map-solar-time.current{font-size:13px;color:#ffe7a6;text-shadow:0 1px 2px #17232d,1px 0 #17232d,-1px 0 #17232d,0 -1px #17232d}.map-observer{width:13px;height:13px;border-radius:50%;background:#fff;border:3px solid #23313b;box-shadow:0 0 0 1px #fff}.map-solar-time{padding-top:12px}
+</style></head><body><header><strong>RidgeArc</strong><span>UI LAB · 太陽の地図方位</span><a href="./">UI Lab</a><a href="../field/">FIELD</a></header>
+<div id="map"></div><div class="controls"><label>日付 <input id="date" type="date" value="2026-11-30"></label><label>時刻 <input id="minute" type="range" min="0" max="1439" value="423"><output id="clock">07:03</output></label><label><input id="trajectory" type="checkbox" checked>太陽の軌跡</label><label><input id="sun" type="checkbox" checked>現在の太陽</label><span id="readout"></span></div>
+<p>地図クリック・白い観測地点のドラッグで移動。金色の円弧は時刻ごとの太陽の方位を示す方位図です。円弧半径は表示用で、地上の太陽位置や日照範囲、山による遮蔽を示すものではありません。破線は基準水平面より下の太陽です。</p>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script type="module">
+import {mountMapSolarOverlay} from '../map-solar-overlay.mjs';
+import {sunPosition} from '../core.mjs';
+const $=id=>document.getElementById(id),state={lat:36.81668,lon:137.03949};
+const map=L.map('map').setView([state.lat,state.lon],15);
+L.tileLayer('https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png',{maxZoom:18,attribution:'地理院タイル'}).addTo(map);
+const observer=L.marker([state.lat,state.lon],{draggable:true,icon:L.divIcon({className:'map-observer',iconSize:[13,13]}),zIndexOffset:500}).bindTooltip('撮影地点',{permanent:true,direction:'left'}).addTo(map);
+const read=()=>({...state,date:$('date').value||'2026-11-30',minute:Number($('minute').value),trajectory:$('trajectory').checked,sun:$('sun').checked});
+const overlay=mountMapSolarOverlay(map,L,read);
+function refresh(){const v=read(),s=sunPosition(v.date,v.minute,v.lat,v.lon);$('clock').value=String(Math.floor(v.minute/60)).padStart(2,'0')+':'+String(v.minute%60).padStart(2,'0');$('readout').textContent='方位 '+s.az.toFixed(2)+'° / 高度 '+s.alt.toFixed(2)+'°';overlay.render()}
+function move(p){state.lat=p.lat;state.lon=p.lng;observer.setLatLng(p);refresh()}
+map.on('click',e=>move(e.latlng));observer.on('drag',()=>move(observer.getLatLng()));for(const id of ['date','minute','trajectory','sun'])$(id).addEventListener('input',refresh);refresh();
+</script></body></html>
