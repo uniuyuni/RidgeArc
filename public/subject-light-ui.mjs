@@ -4,8 +4,8 @@ const fmt=m=>m==null?'未判定':String(Math.floor(Math.round(m)/60)).padStart(2
 const labels={lit:'日照（モデル内）',shadow:'閾値以下（モデル内）',unknown:'未判定'};
 const colors={lit:'#d9b779',shadow:'#394651',unknown:'#947c6e'};
 
-export function mountSubjectLight(root,{onPick,onTarget,onTime,getObserver,workerFactory=()=>new Worker(new URL('./field-terrain-worker.mjs',import.meta.url),{type:'module'})}){
- root.innerHTML=`<h3>被写体の日照・陰影（初期版）</h3>
+export function mountSubjectLight(root,{onPick,onTarget,onTime,onTimeline=()=>{},getObserver,workerFactory=()=>new Worker(new URL('./field-terrain-worker.mjs',import.meta.url),{type:'module'})}){
+ root.innerHTML=`<h3>被写体の日照（計算詳細）</h3>
  <p class="muted">撮影位置とは別の地点の、裸地DEMと幾何太陽による直射光の概算です。気象・大気差・樹木・建物・観測者からの可視性は未考慮。70km・0.25°刻み、斜面法線は40m基線、10m未満の未取得サンプルは取得率対象外。実地形精度は未検証。</p>
  <div class="fieldLocation">
  <label>被写体 緯度<input data-lat type="number" step="any" value="36.5725646"></label>
@@ -17,14 +17,10 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,getObserver,worke
  </div><p data-status class="fieldMessage" aria-live="polite">被写体を指定してください。</p>
  <div data-result hidden>
  <div data-values class="dataGrid"></div>
- <p class="muted">選択日の被写体直射光（法線入射比0.1%超、JST）</p>
- <div data-bar role="img" aria-label="日照時間帯" style="display:flex;height:18px;border-radius:4px;overflow:hidden;background:#394651"></div>
- <div style="display:flex;justify-content:space-between;font-size:11px"><span>00:00</span><span>12:00</span><span>24:00</span></div>
- <p class="muted">金：モデル内日照　青灰：閾値以下　茶：未判定</p>
- <div data-runs></div></div>`;
+ <p class="muted">日照時間帯はメインのタイムラインに表示します。</p></div>`;
  const $=q=>root.querySelector('[data-'+q+']');
  let worker=null,requestId=0,target=null,profile=null,analysis=null,desiredDate=null,minute=900,pending=false,resultDate=null,lastRender='';
- const status=s=>{$('status').textContent=s};
+ const status=s=>{$('status').textContent=s;onTimeline()};
  const clear=()=>{profile=null;analysis=null;resultDate=null;lastRender='';$('result').hidden=true};
  function fail(message){pending=false;clear();status('日照計算失敗：'+message)}
  function request(){
@@ -70,23 +66,16 @@ export function mountSubjectLight(root,{onPick,onTarget,onTime,getObserver,worke
   if(analysis.possibleFirst!==analysis.first||analysis.possibleLast!==analysis.last)
    addValue('未判定を含む可能範囲',fmt(analysis.possibleFirst)+' ～ '+fmt(analysis.possibleLast));
   addValue('斜面法線',profile.normal?'40m基線の概算':'取得不足');
-  if($('bar').dataset.id!==String(requestId)){
-   $('bar').dataset.id=requestId;$('bar').replaceChildren();$('runs').replaceChildren();
-   for(const run of analysis.runs){
-    const label=fmt(run.start)+'–'+fmt(run.end)+' '+labels[run.kind],segment=document.createElement('span');
-    segment.style.width=(run.end-run.start)/14.4+'%';segment.style.background=colors[run.kind];segment.title=label;$('bar').append(segment);
-    if(run.kind!=='shadow'){const row=document.createElement('div');row.className='eventRow';const time=document.createElement('strong');time.textContent=fmt(run.start)+'–'+fmt(run.end);const b=document.createElement('button');b.textContent=labels[run.kind];b.onclick=()=>onTime?.(Math.min(run.start,1439));row.append(time,b);$('runs').append(row);}
-   }
-  }
+
  }
  $('calc').onclick=()=>select($('lat').valueAsNumber,$('lon').valueAsNumber);
  $('pick').onclick=()=>onPick?.();
  $('current').onclick=()=>{const p=getObserver();select(p.lat,p.lon)};
  $('preset').onclick=()=>select(36.5725646,137.6175013);
- return {select,sync(date,m){
+ return {select,track(date){return {target,analysis:resultDate===date?analysis:null,pending:pending||!!target&&resultDate!==date&&!$('status').textContent.startsWith('日照計算失敗'),error:$('status').textContent.startsWith('日照計算失敗')}} ,sync(date,m){
   const changed=date!==desiredDate;desiredDate=date;minute=m;
   if(changed&&target&&!pending)request();
-  else if(changed&&pending){$('result').hidden=true}
+  else if(changed&&pending){$('result').hidden=true;onTimeline()}
   else render();
  }};
 }
