@@ -120,6 +120,9 @@ try{
  await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
  assert.ok(await page.locator('#ridgeDepth').isVisible());
  {
+  // The flat synthetic DEM is below a narrow upward-looking morning frame.
+  // Widen for the existing scene-light receiver regression, then restore the frame.
+  await page.locator('#ridge').dispatchEvent('wheel',{deltaY:Math.log(95/9)/.002});
   await page.locator('[data-sheet=settings]').click();
   const layer=page.locator('[data-layer="日照・陰影"]');
   if(!await layer.isVisible())await page.locator('[data-settings-tab=layers]').click();
@@ -129,6 +132,7 @@ try{
   console.log('scene:',await page.locator('#sceneStatus').innerText());
   if(!live)assert.match(await page.locator('#sceneStatus').innerText(),/日照概算 [1-9]\d*\//);
   await page.locator('[data-sheet=settings]').click();if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();await layer.uncheck();await page.locator('#close').click();
+  await page.locator('#ridge').dispatchEvent('wheel',{deltaY:Math.log(9/95)/.002});
  }
  console.log('coastal:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),await page.locator('#ridgeDepth').innerText());
  // Check independent option controls and actual rendered halo pixels.
