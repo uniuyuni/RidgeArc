@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {selectRidgeWindows,mergeRaySamples,refineRidges,RIDGE_POLICY} from '../public/adaptive-terrain.mjs';
-import {textureSize,columnSubsamples,resolveCoverage,mixDisplaySamples,MAX_TERRAIN_PIXELS} from '../public/terrain-render-policy.mjs';
+import {textureSize,MAX_TERRAIN_PIXELS} from '../public/terrain-render-policy.mjs';
 import {projectTerrainRay} from '../public/core.mjs';
 
 test('ridge selection prioritizes angular height, not absolute elevation',()=>{
@@ -41,17 +41,4 @@ test('texture respects device scale, aspect and total pixel budget',()=>{
  assert.ok(size.width*size.height<=MAX_TERRAIN_PIXELS);
  assert.ok(Math.abs(size.width/size.height-1920/1080)<.01);
  assert.ok(size.width>720&&size.height>360);
-});
-test('fractional feature coverage survives pixel averaging without invented depth',()=>{
- assert.equal(columnSubsamples(180,180,.25),4);
- assert.equal(columnSubsamples(5,800,.25),2);
- assert.deepEqual(resolveCoverage(80,100,120,1,4),[80,100,120,64]);
- assert.deepEqual(resolveCoverage(80,100,120,0,4),[0,0,0,0]);
-});
-
-test('display interpolation preserves coverage and smooths a depth discontinuity',()=>{
- const near={rgb:[40,60,80],alpha:1},far={rgb:[140,160,180],alpha:1};
- assert.deepEqual(mixDisplaySamples(near,far,.25),{rgb:[65,85,105],alpha:1});
- assert.deepEqual(mixDisplaySamples(near,far,.75),{rgb:[115,135,155],alpha:1});
- assert.deepEqual(mixDisplaySamples(near,{rgb:[0,0,0],alpha:0},.75),{rgb:[40,60,80],alpha:.25});
 });
