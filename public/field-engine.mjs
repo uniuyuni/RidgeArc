@@ -1,8 +1,8 @@
 import {sunPosition,angleDelta,wrap,panoramaY,panoramaAltitude,horizonAt,visibilityEstimate,diskBoundary,contactEvents,DEG,clamp} from './core.mjs';
 
-import {surfaceAt,blendSurface,surfaceColor} from './coast-surface.mjs';
+import {surfaceAt,surfaceColor} from './coast-surface.mjs';
 import {shadeColor} from './scene-light-engine.mjs';
-import {textureSize,columnSubsamples,resolveCoverage} from './terrain-render-policy.mjs';
+import {textureSize,columnSubsamples,resolveCoverage,mixDisplaySamples} from './terrain-render-policy.mjs';
 
 // Field preview adapter. Real DEM samples and the existing solar model are used;
 // unknown terrain is never converted to a positive visibility assertion.
@@ -55,6 +55,16 @@ export function makeTerrainTexture(profile,view,w,h,distanceColor=true,shade=nul
  const rowY=alt=>h/2+(panoramaY(view.pitch)-panoramaY(alt))*k;
  const eye=profile.ground+profile.height,samples=columnSubsamples(view.fov,rw,STEP),accum=new Float32Array(rh*4);
  const seaEdge=eye>0?rowY(-Math.sqrt(2*eye/6371000)/DEG)*rh/h:rh;
+ // At zoomed-in scales many columns reuse the same two measured rays.
+ // Cache their row intersections, not fabricated interpolated depths.
+ const rayCache=new Map();
+ function ray(index){
+  let row=rayCache.get(index);if(row)return row;
+  const surface=profile.surfaces[index],edge=profile.total[index]==null?rh:rowY(profile.total[index])*rh/h;
+  const start=Math.max(0,Math.floor(Math.min(edge,surface.water?.length?seaEdge:rh)));
+  const hits=new Array(rh);for(let y=start;y<rh;y++)hits[y]=surfaceAt(surface,slopes[y],eye);
+  row={edge,hits};rayCache.set(index,row);if(rayCache.size>4)rayCache.delete(rayCache.keys().next().value);return row;
+ }
  for(let x=0;x<rw;x++){
   accum.fill(0);
   let firstRow=rh;
@@ -62,18 +72,22 @@ export function makeTerrainTexture(profile,view,w,h,distanceColor=true,shade=nul
    const az=wrap(view.az+((x+(sub+.5)/samples)*w/rw-w/2)/k),a=az/STEP,i=Math.floor(a),j=(i+1)%profile.total.length,f=a-i,horizonAngle=horizon(profile,az);
    const edge=horizonAngle==null?rh:rowY(horizonAngle)*rh/h;
    const hasWater=profile.surfaces[i].water?.length||profile.surfaces[j].water?.length;
-   const waterEdge=hasWater?seaEdge:rh;
+   const waterEdge=hasWater?seaEdge:rh,ra=ray(i),rb=ray(j);
    const start=Math.max(0,Math.floor(Math.min(edge,waterEdge)));firstRow=Math.min(firstRow,start);
    for(let y=start;y<rh;y++){
-    const hit=blendSurface(surfaceAt(profile.surfaces[i],slopes[y],eye),surfaceAt(profile.surfaces[j],slopes[y],eye),f);
-    if(!hit&&y+1<=edge)continue;
-    const alpha=hit?.kind==='water'?1:clamp(y+1-edge,0,1);
-    if(alpha===0)continue;
-    const rgb=shadeColor(surfaceColor(hit,distanceColor),shade,x,y,rw,rh,hit),q=y*4;
+    const a=ra.hits[y]??null,b=rb.hits[y]??null,landAlpha=clamp(y+1-edge,0,1);
+    if(landAlpha===0&&a?.kind!=='water'&&b?.kind!=='water')continue;
+    // Use the interpolated skyline for land coverage. A ray whose skyline
+    // lies below the pixel contributes no false unknown-colored summit.
+    const sample=(hit,other,rayEdge)=>{
+     const material=hit??(y+.5<rayEdge&&other?.kind==='land'?other:null);
+     return {rgb:shadeColor(surfaceColor(material,distanceColor),shade,x,y,rw,rh,material),alpha:material?.kind==='water'?1:landAlpha};
+    };
+    const {rgb,alpha}=mixDisplaySamples(sample(a,b,ra.edge),sample(b,a,rb.edge),f),q=y*4;
     accum[q]+=rgb[0]*alpha;accum[q+1]+=rgb[1]*alpha;accum[q+2]+=rgb[2]*alpha;accum[q+3]+=alpha;
    }
   }
-  // Integrate coverage/color, never blend two unrelated depths into a fake surface.
+  // Integrate display coverage/color; analytical depths remain untouched.
   for(let y=firstRow;y<rh;y++){const q=y*4,out=(y*rw+x)*4;data.set(resolveCoverage(accum[q],accum[q+1],accum[q+2],accum[q+3],samples),out)}
  }
  ctx.putImageData(image,0,0);
