@@ -79,7 +79,7 @@ async function resolveWater(rays,ground,distances,isCurrent,requests){
  return rays.map(row=>waterRanges(distances,row.map(p=>p.water===true)));
 }
 async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
- const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};let failedTiles=0,firstTileError=null;const requests={onFailure:e=>{failedTiles++;if(!firstTileError)firstTileError=e?.message??'原因不明'},onRetry:e=>{if(isCurrent())postMessage({type:'progress',id:generation,phase:'retry',message:'通信不安定・再試行 '+e.attempt+'/'+e.max,attempt:e.attempt,max:e.max})}};
+ const rays=[],samples=[],ground={lat:target.lat,lon:target.lon,h:null};let failedTiles=0,firstTileError=null;const requests={onFailure:e=>{failedTiles++;if(!firstTileError)firstTileError=(e?.key?e.key+'：':'')+(e?.message??'原因不明')},onRetry:e=>{if(isCurrent())postMessage({type:'progress',id:generation,phase:'retry',message:'通信不安定・再試行 '+e.attempt+'/'+e.max+'：'+(e.key?e.key+'：':'')+e.message,attempt:e.attempt,max:e.max})}};
  const distances=Float64Array.from(bands.flatMap(b=>Array.from({length:Math.floor((b.end-b.start)/b.inc)+1},(_,i)=>b.start+i*b.inc)));
  for(let i=0;i<rayCount;i++){
   const row=[];
@@ -109,7 +109,7 @@ async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true){
 }
 async function refineTerrain(data,eyeHeight,isCurrent){
  let failedTiles=data.failedTiles,firstTileError=data.firstTileError;
- const requests={onFailure:e=>{failedTiles++;firstTileError??=e?.message??'原因不明'},onRetry:e=>{if(isCurrent())postMessage({type:'progress',id:generation,phase:'retry',message:'通信不安定・再試行 '+e.attempt+'/'+e.max,attempt:e.attempt,max:e.max})}};
+ const requests={onFailure:e=>{failedTiles++;firstTileError??=(e?.key?e.key+'：':'')+(e?.message??'原因不明')},onRetry:e=>{if(isCurrent())postMessage({type:'progress',id:generation,phase:'retry',message:'通信不安定・再試行 '+e.attempt+'/'+e.max+'：'+(e.key?e.key+'：':'')+e.message,attempt:e.attempt,max:e.max})}};
  const refined=await refineRidges({target:data.target,distances:data.distances,heights:data.heights,ground:data.ground,step,eyeHeight,isCurrent,fetchTile:key=>getTile(key,requests),onProgress:(done,total)=>{if(isCurrent())postMessage({type:'progress',id:generation,message:'稜線詳細DEM '+done+'/'+total+' タイル',done,total})}});
  if(!refined||!isCurrent())return null;
  const complete=data.complete.map((value,i)=>value&&!refined.rows[i].some(p=>!Number.isFinite(p.h)));
