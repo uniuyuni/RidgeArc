@@ -120,10 +120,12 @@ try{
  await page.locator('[data-sheet=search]').click();
  await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
  assert.equal(await page.locator('#labRunSearch').getAttribute('aria-label'),'探索済み');
- // The compact strip lives outside the actual landscape.
- assert.equal(await page.locator('#ridge').evaluate(el=>el.parentElement.contains(document.querySelector('#fieldAcquisition'))),false);
- assert.ok((await page.locator('#fieldAcquisition').boundingBox()).height<=26);
- assert.match(await page.locator('header .demo').innerText(),/0\.6\.1/);
+ // The one shared overlay is inside the stage and never participates in layout.
+ assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
+ assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
+ assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
+ assert.match(await page.locator('header .demo').innerText(),/0\.6\.2/);
+ await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
  assert.ok(otherLabel,'fixture must contain two distinct dates');
