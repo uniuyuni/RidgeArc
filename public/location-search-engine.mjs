@@ -1,4 +1,4 @@
-import {R,DEG,destination,sunPosition,wrap} from './core.mjs';
+import {R,DEG,destination,sunPosition,wrap,visibilityEstimate,clamp,angleDelta} from './core.mjs';
 import {targetDirection,finiteLOS,reverseCandidates,evaluateAlignment} from './location-geometry.mjs';
 import {sampleElevationBatch} from './terrain-store.mjs';
 
@@ -29,7 +29,7 @@ export async function searchSubjectLocations(req,options={}){
  requireRequest(req);
  const ctx=session(options),days=req.days??1,minutes=req.windowMinutes??0,minM=req.minM??100,maxM=req.maxM??10000,radialStep=req.radialStep??250;
  if(!Number.isInteger(days)||days<1||days>7||!Number.isInteger(minutes)||minutes<0||minutes>30||minM<50||maxM>30000||minM>maxM||radialStep<50)throw Error('探索範囲が上限外です');
- const dates=validDateList(req.date,days),times=Array.from({length:Math.floor(minutes*2/5)+1},(_,i)=>req.minute-minutes+i*5).filter(m=>m>=0&&m<1440);
+ const dates=validDateList(req.date,days),times=[...new Set([req.minute,...Array.from({length:Math.floor(minutes*2/5)+1},(_,i)=>req.minute-minutes+i*5)])].filter(m=>m>=0&&m<1440).sort((a,b)=>a-b);
  const count=(Math.floor((maxM-minM)/radialStep)+1)*5*dates.length*times.length;
  if(count>LIMIT)throw Error('候補点数が多すぎます。日数・時間幅・距離を縮めてください（最大'+LIMIT+'点）');
  const raw=dates.flatMap(date=>times.flatMap(minute=>reverseCandidates(req.subject,date,minute,{minM,maxM,radialStep}).map(p=>({...p,date,minute}))));
@@ -52,10 +52,32 @@ export async function searchSubjectLocations(req,options={}){
  ctx.onProgress('被写体への有限視線を検証 '+chosen.length+'点');
  const hs=points.length?await ctx.sample(points):[];
  const results=jobs.map(({c,ds,start})=>{const los=finiteLOS(c.observer,target,ds.map((distance,i)=>({distance,height:hs[start+i]})));
-  // LOS stops at the subject; a distinct farther mountain may still obscure
-  // the sun. Do not call these confirmed celestial-visible compositions.
-  return {...c,los,status:los.status==='blocked'?'blocked':los.status==='unknown'?'unknown':'subject-sample-clear',sunVisibility:'未検証'};
+  return {...c,los,status:los.status==='blocked'?'blocked':los.status==='unknown'?'unknown':'subject-sample-clear',sunVisibility:null};
  });
+ const solarPoints=[],solarJobs=[];
+ for(const result of results.filter(r=>r.los.status!=='blocked')){
+  const sun=result.align.sun,span=sun.radius/Math.max(.05,Math.cos(sun.alt*DEG)),start=solarPoints.length;
+  for(const az of [sun.az-span,sun.az,sun.az+span]){
+   for(const d of horizonDistances)solarPoints.push(at(result.observer,az,d,d<=2000?'near':d<=14000?'mid':'far'));
+  }
+  solarJobs.push({result,sun,span,start});
+ }
+ ctx.onProgress('天体円盤の遮蔽概算 '+solarJobs.length+'点');
+ const solarHeights=solarPoints.length?await ctx.sample(solarPoints):[];
+ for(const {result,sun,span,start} of solarJobs){
+  const rows=[];
+  for(let j=0;j<3;j++){
+   let max=-Infinity,complete=true;
+   for(let k=0;k<horizonDistances.length;k++){
+    const d=horizonDistances[k],z=solarHeights[start+j*horizonDistances.length+k];
+    if(!isNum(z)){complete=false;continue}
+    max=Math.max(max,Math.atan2(z-result.observer.height-d*d/(2*R),d)/DEG);
+   }
+   rows.push({angle:Number.isFinite(max)?max:null,complete});
+  }
+  const interpolate=az=>{const q=clamp(angleDelta(az,sun.az)/span,-1,1),i=q<0?0:1,t=q<0?q+1:q,a=rows[i],b=rows[i+1];return a.angle==null||b.angle==null?null:a.angle+(b.angle-a.angle)*t};
+  result.sunVisibility=visibilityEstimate(sun,interpolate,()=>rows.every(r=>r.complete));
+ }
  return {kind:'G5',status:'sampled',sampled:raw.length,matched:candidates.length,checked:chosen.length,limited:candidates.length>chosen.length,missing,results,policy:{radialStep,minutes:5,days,tolerance:req.tolerance??.27,offsets:[-1,-.5,0,.5,1]}};
 }
 function lastContact(date,p,eye){
@@ -72,7 +94,7 @@ export async function searchHorizonLocations(req,options={}){
  requireRequest(req);const ctx=session(options),radius=req.radiusM??1500,step=req.gridStep??500;
  if(!isNum(radius)||radius<100||radius>5000||!isNum(step)||step<100||Math.floor(radius*2/step+1)**2>81)throw Error('G4は最大81候補点です。探索半径・間隔を変更してください');
  const raw=[];
- for(let n=-radius;n<=radius+1e-8;n+=step)for(let e=-radius;e<=radius+1e-8;e+=step){const d=Math.hypot(n,e);if(d>radius)continue;const [lat,lon]=destination(req.center.lat,req.center.lon,Math.atan2(e,n)/DEG,d);if(validPoint({lat,lon}))raw.push({lat,lon})}
+ for(let n=-Math.floor(radius/step)*step;n<=radius+1e-8;n+=step)for(let e=-Math.floor(radius/step)*step;e<=radius+1e-8;e+=step){const d=Math.hypot(n,e);if(d>radius)continue;const [lat,lon]=destination(req.center.lat,req.center.lon,Math.atan2(e,n)/DEG,d);if(validPoint({lat,lon}))raw.push({lat,lon})}
  ctx.onProgress('候補の標高取得 '+raw.length+'点');
  const ground=await ctx.sample(raw.map(p=>near(p.lat,p.lon))),points=[],jobs=[],results=[];
  for(let i=0;i<raw.length;i++){
