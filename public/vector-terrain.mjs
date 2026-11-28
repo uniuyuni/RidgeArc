@@ -1,4 +1,4 @@
-import {R,DEG,wrap,clamp,panoramaY} from './core.mjs';
+import {R,DEG,panoramaY} from './core.mjs';
 import {surfaceColor} from './coast-surface.mjs';
 import {shadeColor} from './scene-light-engine.mjs';
 import {textureSize} from './terrain-render-policy.mjs';
@@ -72,7 +72,7 @@ export function vectorTerrainTexture(profile,view,w,h,distanceColor=true,shade=n
  const idx=i=>((i%N)+N)%N;
  // Unresolved spans beneath the analytical skyline are a neutral background.
  // Draw the continuous measured skyline as a polygon, never nearest-ray columns.
- c.fillStyle='rgb(76,87,95)';let run=[];
+ const neutral=shadeColor([76,87,95],shade,0,0,w,h,null);c.fillStyle='rgb('+neutral.join(',')+')';let run=[];
  function flush(){if(run.length>=2){c.beginPath();c.moveTo(run[0][0],h);for(const p of run)c.lineTo(...p);c.lineTo(run.at(-1)[0],h);c.closePath();c.fill()}run=[]}
  for(let i=start;i<=end;i++){const a=profile.total[idx(i)];if(a==null){flush();continue}run.push([x(i*step),h/2+(panoramaY(view.pitch)-panoramaY(a))*scale])}flush();
  // Build only visible angular strips. All polygons at a given depth/material
@@ -85,10 +85,10 @@ export function vectorTerrainTexture(profile,view,w,h,distanceColor=true,shade=n
    const pts=poly.points.map(([px,s])=>[px,y(s)]);
    if(pts.every(p=>p[1]<0)||pts.every(p=>p[1]>h))continue;
    const k=Number(poly.key.split(':')[1]),d=representative(k);
-   const hit={kind:poly.kind,distance:poly.distance};
-   // Water is a separate, uniform material; avoid depth-color stripes.
-   const rgb=shadeColor(surfaceColor({kind:poly.kind,distance:poly.kind==='water'?600:d},distanceColor),shade,clamp(pts.reduce((n,p)=>n+p[0],0)/pts.length,0,w-1),clamp(pts.reduce((n,p)=>n+p[1],0)/pts.length,0,h-1),w,h,hit);
-   const key=poly.key+':'+rgb.join(','),group=groups.get(key)??{depth:d,rgb,polygons:[]};
+   // Geometry and illumination are independent: batch entire depth bands,
+   // then clip a continuous depth-specific illumination raster to their path.
+   const rgb=surfaceColor({kind:poly.kind,distance:poly.kind==='water'?600:d},distanceColor);
+   const key=poly.key,group=groups.get(key)??{depth:d,kind:poly.kind,rgb,polygons:[]};
    group.polygons.push(pts);groups.set(key,group);
   }
   left=right;
@@ -96,7 +96,16 @@ export function vectorTerrainTexture(profile,view,w,h,distanceColor=true,shade=n
  for(const group of [...groups.values()].sort((a,b)=>b.depth-a.depth)){
   c.fillStyle='rgb('+group.rgb.join(',')+')';c.beginPath();
   for(const p of group.polygons){c.moveTo(...p[0]);for(let i=1;i<p.length;i++)c.lineTo(...p[i]);c.closePath()}
-  c.fill();
+  if(!shade||group.kind==='water'){c.fill();continue}
+  // Supersample the interpolated irradiance before tone mapping. Directly
+  // magnifying a tiny 8-bit texture quantizes gradients into visible bands.
+  const cols=shade.cols?Math.max(16,shade.cols*2):1,rows=shade.rows?Math.max(8,shade.rows*2):1,texture=document.createElement('canvas');texture.width=cols;texture.height=rows;
+  const tc=texture.getContext('2d'),image=tc.createImageData(cols,rows),hit={kind:'land',distance:group.depth};
+  for(let iy=0;iy<rows;iy++)for(let ix=0;ix<cols;ix++){
+   const color=shadeColor(group.rgb,shade,(ix+.5)*w/cols,(iy+.5)*h/rows,w,h,hit);
+   image.data.set([...color,255],(iy*cols+ix)*4);
+  }
+  tc.putImageData(image,0,0);c.save();c.clip();c.imageSmoothingEnabled=true;c.drawImage(texture,0,0,w,h);c.restore();
  }
  return canvas;
 }

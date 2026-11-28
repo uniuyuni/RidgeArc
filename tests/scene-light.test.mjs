@@ -30,10 +30,16 @@ test('solar disk horizon handles north wrap and missing directions',()=>{
  assert.equal(directionalHorizon(s,h,.05).complete,false);
  assert.equal(directionalHorizon(s,[h[0],{angle:null},h[2]],.05).angle,null);
 });
-test('scene color does not bleed across depth boundaries or onto water',()=>{
- const g={rows:1,cols:1,depth:[100],index:[0],values:[{kind:'shadow',value:0,illumination:{direct:[0,0,0],diffuse:[.1,.1,.1]}}]};
- const rgb=[100,100,100];
- const shadow=shadeColor(rgb,g,0,0,1,1,{kind:'land',distance:100});assert.ok(shadow.every(v=>v>0&&v<100));
- assert.equal(shadeColor(rgb,g,0,0,1,1,{kind:'land',distance:1000}),rgb);
- assert.equal(shadeColor(rgb,g,0,0,1,1,{kind:'water',distance:100}),rgb);
+test('lighting fades continuously, cannot copy illumination between unrelated depths or onto water',()=>{
+ const ambient=[.08,.08,.08],g={rows:1,cols:2,depth:[100,100],index:[0,1],ambient,values:[{kind:'shadow',value:0,illumination:{direct:[0,0,0],diffuse:[.05,.05,.05]}},{kind:'lit',value:.5,illumination:{direct:[.5,.5,.5],diffuse:[.05,.05,.05]}}]};
+ const rgb=[100,100,100],hit={kind:'land',distance:100},at=x=>shadeColor(rgb,g,x,50,100,100,hit);
+ const shadow=at(25),mid=at(50),lit=at(75);
+ assert.ok(shadow.every((v,k)=>v>0&&v<mid[k]&&mid[k]<lit[k]));
+ assert.ok(at(49).every((v,k)=>Math.abs(v-at(51)[k])<8));
+ const unknown=shadeColor(rgb,{ambient},0,0,100,100,hit);
+ assert.deepEqual(shadeColor(rgb,g,50,50,100,100,{kind:'land',distance:1000}),unknown);
+ assert.notDeepEqual(unknown,rgb);
+ assert.equal(shadeColor(rgb,g,0,0,100,100,{kind:'water',distance:100}),rgb);
+ const night=shadeColor(rgb,{ambient:[.000001,.000001,.000001]},0,0,100,100,hit);
+ assert.ok(night.every((v,k)=>v<unknown[k]));
 });
