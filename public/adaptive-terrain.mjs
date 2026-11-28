@@ -1,4 +1,4 @@
-import {R,DEG,clamp,destination,tilePixel,decodeElevation} from './core.mjs';
+import {R,DEG,destination,tilePixel,decodeElevation} from './core.mjs';
 
 // Two-stage horizon sampling. Coarse observations select windows; they are
 // not upper bounds and cannot certify that an unsampled summit does not exist.
@@ -38,11 +38,19 @@ export async function refineRidges({target,distances,heights,ground,step,eyeHeig
  for(let i=0;i<heights.length;i++){
   if(!isCurrent())return null;
   const windows=selectRidgeWindows(distances,heights[i],eye,policy),seen=new Set();
-  for(const window of windows)for(let d=window.start;d<=window.end;d+=policy.stepM){
+  for(const window of windows){
+   const positions=new Set();
+   for(let d=window.start;d<=window.end;d+=policy.stepM)positions.add(d);
+   positions.add(window.end);
+   // Replace original coarse elevations at the same distances if the
+   // native sample exists; otherwise a coarse false summit could survive.
+   for(const d of distances)if(d>=window.start&&d<=window.end)positions.add(d);
+   for(const d of positions){
    if(seen.has(d))continue;seen.add(d);
    const [lat,lon]=destination(target.lat,target.lon,i*step,d),p=tilePixel(lat,lon,policy.zoom),key='dem_png/'+p.key;
    let tile=tiles.get(key);if(!tile){tile={key,points:[],rays:new Set()};tiles.set(key,tile)}
    const sample={d,h:NaN};tile.points.push({sample,i,offset:p.i});tile.rays.add(i);
+   }
   }
   if(i%120===119)await new Promise(r=>setTimeout(r,0));
  }
