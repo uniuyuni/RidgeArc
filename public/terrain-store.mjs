@@ -52,13 +52,15 @@ export function getTile(key,{onRetry=()=>{},onFailure=()=>{}}={}){
 // Bounded tile requests, batch by source and tile. No missing sample is zero-filled.
 export async function sampleElevationBatch(points,{isCurrent=()=>true,onProgress=()=>{},fetchTile=getTile,strictNear=false}={}){
  const values=new Float64Array(points.length);values.fill(NaN);
+ const local=p=>p.detail==='near'||p.detail==='fine';
  const plans=[
-  {id:'dem5a_png',z:15,accept:p=>p.detail==='near'},
-  {id:'dem5b_png',z:15,accept:p=>p.detail==='near'},
-  {id:'dem5c_png',z:15,accept:p=>p.detail==='near'},
-  {id:'dem_png',z:14,accept:p=>p.detail==='near'},
-  {id:'dem_png',z:12,accept:p=>p.detail==='mid'||(!strictNear&&p.detail==='near')},
-  {id:'dem_png',z:10,accept:p=>!strictNear||p.detail!=='near'}
+  {id:'dem1a_png',z:17,accept:p=>p.detail==='fine'},
+  {id:'dem5a_png',z:15,accept:local},
+  {id:'dem5b_png',z:15,accept:local},
+  {id:'dem5c_png',z:15,accept:local},
+  {id:'dem_png',z:14,accept:local},
+  {id:'dem_png',z:12,accept:p=>p.detail==='mid'||(!strictNear&&local(p))},
+  {id:'dem_png',z:10,accept:p=>!strictNear||!local(p)}
  ];
  for(const plan of plans){
   if(!isCurrent())return null;
