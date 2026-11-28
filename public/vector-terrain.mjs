@@ -1,4 +1,4 @@
-import {R,DEG,wrap,clamp,panoramaY} from './core.mjs';
+import {R,DEG,panoramaY} from './core.mjs';
 import {surfaceColor} from './coast-surface.mjs';
 import {shadeColor} from './scene-light-engine.mjs';
 import {textureSize} from './terrain-render-policy.mjs';
@@ -97,7 +97,9 @@ export function vectorTerrainTexture(profile,view,w,h,distanceColor=true,shade=n
   c.fillStyle='rgb('+group.rgb.join(',')+')';c.beginPath();
   for(const p of group.polygons){c.moveTo(...p[0]);for(let i=1;i<p.length;i++)c.lineTo(...p[i]);c.closePath()}
   if(!shade||group.kind==='water'){c.fill();continue}
-  const cols=shade.cols??1,rows=shade.rows??1,texture=document.createElement('canvas');texture.width=cols;texture.height=rows;
+  // Supersample the interpolated irradiance before tone mapping. Directly
+  // magnifying a tiny 8-bit texture quantizes gradients into visible bands.
+  const cols=shade.cols?Math.max(16,shade.cols*2):1,rows=shade.rows?Math.max(8,shade.rows*2):1,texture=document.createElement('canvas');texture.width=cols;texture.height=rows;
   const tc=texture.getContext('2d'),image=tc.createImageData(cols,rows),hit={kind:'land',distance:group.depth};
   for(let iy=0;iy<rows;iy++)for(let ix=0;ix<cols;ix++){
    const color=shadeColor(group.rgb,shade,(ix+.5)*w/cols,(iy+.5)*h/rows,w,h,hit);
