@@ -6,11 +6,12 @@ export function projectSky(az,alt){
  const h=Math.cos(alt*DEG);
  return {x:h*Math.sin(az*DEG),y:-h*Math.cos(az*DEG)};
 }
+export function skyDomePoint(date,observer,minute){
+ const s=sunPosition(date,minute,observer.lat,observer.lon);
+ return {...s,minute,...projectSky(s.az,s.alt)};
+}
 export function skyDomePath(date,observer,selectedMinute){
- const at=minute=>{
-  const s=sunPosition(date,minute,observer.lat,observer.lon);
-  return {...s,minute,...projectSky(s.az,s.alt)};
- };
+ const at=minute=>skyDomePoint(date,observer,minute);
  const segments=[],hours=[];let segment=[],previous=null;
  for(let m=0;m<=1440;m++){
   const p=at(m);
