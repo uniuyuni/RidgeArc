@@ -31,6 +31,7 @@ try{
   if(live&&!route.request().url().includes('/std/'))return route.continue();
   await route.fulfill({status:200,contentType:'image/png',headers:{'access-control-allow-origin':'*'},body:tile});
  });
+ await context.route('https://mreversegeocoder.gsi.go.jp/reverse-geocoder/**',route=>route.fulfill({status:200,contentType:'application/json',headers:{'access-control-allow-origin':'*'},body:JSON.stringify({results:{lv01Nm:'検証用地名'}})}));
  const page=await context.newPage(),errors=[];
  page.on('pageerror',e=>errors.push(e.message));
  const start=Date.now();
@@ -79,6 +80,14 @@ try{
    return {ground:p.ground,height:p.height,refinement:p.refinement,rows,render:{actual,expected,error}};
   });
   console.log('ISLAND FIELD',JSON.stringify(debug));
+  const named=await page.evaluate(async()=>{
+   const {visiblePeaks}=await import('/geographic-labels.mjs');
+   const {peaks}=await fetch('/data/gsi-mountains.json').then(r=>r.json()),p=window.__terrainProfile;
+   return visiblePeaks(peaks,p,{lat:36.81668,lon:137.03949,height:p.ground+p.height}).map(x=>({name:x.name,az:x.az,alt:x.alt,distance:x.distance}));
+  });
+  console.log('Official named peaks in actual coastal DEM:',JSON.stringify(named));
+  assert.ok(named.length>0,'actual DEM must match some official summit positions');
+
   assert.ok(debug?.refinement?.validSamples>0,'native ridge refinement must produce measured samples');
   assert.ok(debug.refinement.selectedTiles<=192,'bounded native tile workload');
   assert.ok(debug?.rows.some(r=>r.az>=113&&r.az<=117&&r.probe.some(p=>p.a===.6&&p.hit?.kind==='land'&&p.hit.distance>500&&p.hit.distance<600)),'real Onna-iwa must retain elevated foreground surface');
@@ -150,11 +159,25 @@ try{
  const off=await countRed();
  await outline.check();
  assert.equal(await word.evaluate(e=>getComputedStyle(e).webkitTextStrokeWidth),'2px');
+ assert.equal(await word.evaluate(e=>getComputedStyle(e).webkitTextStrokeColor),'rgb(255, 0, 0)');
  const on=await countRed();
  console.log('Ridge outline pixels:',{off,on});
  assert.ok(on>30&&on>off+30,'red outline must be visibly rendered');
  await outline.uncheck();
  assert.equal(await countRed(),off);
+ const peakLayer=page.locator('[data-layer="山名・標高"]');
+ if(!await peakLayer.isVisible())await page.locator('details').filter({has:peakLayer}).locator('summary').click();
+ assert.equal(await peakLayer.isEnabled(),true);const peaksLoaded=page.waitForResponse(r=>r.url().endsWith('/data/gsi-mountains.json'),{timeout:10000});await peakLayer.check();
+ assert.equal((await peaksLoaded).ok(),true);
+ await peakLayer.uncheck();
+ const skyLayer=page.locator('[data-layer="薄明・空色"]');
+ if(!await skyLayer.isVisible())await page.locator('details').filter({has:skyLayer}).locator('summary').click();
+ assert.equal(await skyLayer.isEnabled(),true);
+ const beforeSky=await page.locator('#ridge').evaluate(c=>Array.from(c.getContext('2d').getImageData(20,20,1,1).data));
+ await skyLayer.check();
+ const afterSky=await page.locator('#ridge').evaluate(c=>Array.from(c.getContext('2d').getImageData(20,20,1,1).data));
+ assert.notDeepEqual(afterSky,beforeSky,'clear sky layer changes actual rendered sky');
+ await skyLayer.uncheck();
  await page.locator('[data-settings-tab=general]').click();
 
  await page.locator('[data-sun-option="marker"]').check();
@@ -257,7 +280,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.9\.1/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.10/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
@@ -321,6 +344,15 @@ try{
   const reopened=await shared.evaluate(async()=>{const {decodeSnapshot}=await import('/field-snapshot.mjs');return decodeSnapshot(new URL(document.querySelector('#snapshotLink').value).hash.slice(10))});
   assert.deepEqual(reopened,saved.state,'share URL restores composition on new page');
   await shared.close();
+  const lab=await context.newPage();
+  await lab.goto('http://127.0.0.1:'+server.address().port+'/ui-lab/location-search.html');
+  await lab.locator('#kind').selectOption('G4');
+  await lab.locator('#radius').fill('100');await lab.locator('#gridStep').fill('100');
+  await lab.locator('#run').click();
+  await lab.waitForFunction(()=>document.querySelector('#status').textContent.startsWith('探索完了'),null,{timeout:90000});
+  assert.equal(await lab.locator('#results article').count(),5);
+  assert.equal(await lab.locator('#run').isEnabled(),true);
+  await lab.close();
   const failure=await context.newPage();
   await failure.addInitScript(()=>{
    const NativeWorker=window.Worker;
