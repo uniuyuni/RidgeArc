@@ -35,8 +35,8 @@ try{
  page.on('pageerror',e=>errors.push(e.message));
  const start=Date.now();
  await page.goto('http://127.0.0.1:'+server.address().port+'/field/');
- await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldStatus')?.textContent),null,{timeout:live?180000:90000});
- console.log('observer:',await page.locator('#fieldStatus').innerText(),Date.now()-start+'ms');
+ await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
+ console.log('observer:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),Date.now()-start+'ms');
  await page.locator('[data-sheet=info]').click();
  await page.locator('[data-preset]').click();
  await page.waitForFunction(()=>/^裸地DEM /.test(document.querySelector('[data-status]')?.textContent),null,{timeout:live?180000:90000});
@@ -66,7 +66,7 @@ try{
  await page.locator('#locLat').fill('36.816525');
  await page.locator('#locLon').fill('137.0373667');
  await page.locator('#locGo').click();
- await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldStatus')?.textContent),null,{timeout:live?180000:90000});
+ await page.waitForFunction(()=>/^DEM /.test(document.querySelector('#fieldAcquisition')?.dataset.detail),null,{timeout:live?180000:90000});
  assert.ok(await page.locator('#ridgeDepth').isVisible());
  {
   await page.locator('[data-sheet=settings]').click();
@@ -79,7 +79,7 @@ try{
   if(!live)assert.match(await page.locator('#sceneStatus').innerText(),/日照概算 [1-9]\d*\//);
   await page.locator('[data-sheet=settings]').click();if(!await layer.isVisible())await page.locator('details').filter({has:layer}).locator('summary').click();await layer.uncheck();await page.locator('#close').click();
  }
- console.log('coastal:',await page.locator('#fieldStatus').innerText(),await page.locator('#ridgeDepth').innerText());
+ console.log('coastal:',await page.locator('#fieldAcquisition').getAttribute('data-detail'),await page.locator('#ridgeDepth').innerText());
  // Verify the approved timeline workflow using a real solar direction.
  const lock=page.locator('.subjectLockButton');
  // Receiver preset has already selected and locked Oyama.
@@ -106,14 +106,55 @@ try{
  await page.waitForFunction(()=>document.querySelector('#labRunSearch').getAttribute('aria-label')==='探索済み',null,{timeout:60000});
  assert.match(await page.locator('#labCandidates').getAttribute('aria-label'),/候補 [1-9]\d*件/);
  await page.locator('#labCandidates').click();
- const result=page.locator('#sheetBody .eventRow button').first();
+ const candidates=page.locator('#sheetBody .eventRow button');
+ const labels=await candidates.allInnerTexts();
+ const initial=await page.locator('#date').inputValue();
+ const index=labels.findIndex(l=>l.slice(0,10)!==initial);
+ assert.ok(index>=0,'fixture must contain a different date');
+ const result=candidates.nth(index);
  assert.ok(await result.isVisible());const label=await result.innerText();await result.click();
  assert.equal(await page.locator('#sheet').isHidden(),true);
  assert.equal(await page.locator('#date').inputValue(),label.slice(0,10));
+ assert.equal((await page.locator('#clock').innerText()).trim(),label.slice(11,16));
  await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
  await page.locator('[data-sheet=search]').click();
  await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
  assert.equal(await page.locator('#labRunSearch').getAttribute('aria-label'),'探索済み');
+ // The compact strip lives outside the actual landscape.
+ assert.equal(await page.locator('#ridge').evaluate(el=>el.parentElement.contains(document.querySelector('#fieldAcquisition'))),false);
+ assert.ok((await page.locator('#fieldAcquisition').boundingBox()).height<=26);
+ assert.match(await page.locator('header .demo').innerText(),/0\.6\.1/);
+ // Exercise a different actual result through the canvas (not just the list).
+ const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
+ assert.ok(otherLabel,'fixture must contain two distinct dates');
+ await page.setViewportSize({width:412,height:844});
+ await page.waitForTimeout(250);
+ const cv=page.locator('#timeCanvas'),box=await cv.boundingBox();
+ const base=Date.parse('2026-12-01T00:00:00Z')/86400000;
+ const endDay=Date.parse('2027-01-02T00:00:00Z')/86400000;
+ const days=endDay-base,center=(base+endDay)/2;
+ const day=Date.parse(otherLabel.slice(0,10)+'T00:00:00Z')/86400000;
+ const [hours,minutes]=otherLabel.slice(11,16).split(':').map(Number);
+ const value=day+(hours*60+minutes)/1440;
+ // Drag the desired candidate into the centre, then zoom to a single day.
+ const dx=(center-value)*box.width/days;
+ const startX=box.x+box.width/2-dx/2;
+ const y=box.y+40;
+ await page.mouse.move(startX,y);await page.mouse.down();
+ await page.mouse.move(startX+dx,y,{steps:10});await page.mouse.up();
+ await page.mouse.move(box.x+box.width/2,y);
+ await page.mouse.wheel(0,Math.log(1/days)/.002);
+ await page.waitForTimeout(150);
+ await cv.click({position:{x:box.width/2,y:40}});
+ await page.waitForFunction(()=>!document.querySelector('.labTimelineGhost'));
+ assert.equal(await page.locator('#labNormalTimebar').isVisible(),true);
+ assert.equal(await page.locator('#date').inputValue(),otherLabel.slice(0,10));
+ assert.equal((await page.locator('#clock').innerText()).trim(),otherLabel.slice(11,16));
+ // Range must include the chosen day even when it started outside the initial interval.
+ await page.locator('#tracks').click();
+ const lo=await page.locator('#rangeStart').inputValue(),hi=await page.locator('#rangeEnd').inputValue();
+ assert.ok(lo<=otherLabel.slice(0,10)&&otherLabel.slice(0,10)<=hi);
+ await page.locator('#close').click();
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
 }finally{await browser?.close();await new Promise(r=>server.close(r))}
