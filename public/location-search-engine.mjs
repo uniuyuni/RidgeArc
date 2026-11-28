@@ -28,7 +28,7 @@ function validDateList(date,days){
 export async function searchSubjectLocations(req,options={}){
  requireRequest(req);
  const ctx=session(options),days=req.days??1,minutes=req.windowMinutes??0,minM=req.minM??100,maxM=req.maxM??10000,radialStep=req.radialStep??250;
- if(!Number.isInteger(days)||days<1||days>7||!Number.isInteger(minutes)||minutes<0||minutes>30||minM<50||maxM>30000||minM>maxM||radialStep<50)throw Error('探索範囲が上限外です');
+ if(!isNum(req.tolerance??.27)||(req.tolerance??.27)<0||(req.tolerance??.27)>2||!isNum(req.verticalOffset??0)||Math.abs(req.verticalOffset??0)>10||!Number.isInteger(days)||days<1||days>7||!Number.isInteger(minutes)||minutes<0||minutes>30||minM<50||maxM>30000||minM>maxM||radialStep<50)throw Error('探索範囲が上限外です');
  const dates=validDateList(req.date,days),times=[...new Set([req.minute,...Array.from({length:Math.floor(minutes*2/5)+1},(_,i)=>req.minute-minutes+i*5)])].filter(m=>m>=0&&m<1440).sort((a,b)=>a-b);
  const count=(Math.floor((maxM-minM)/radialStep)+1)*5*dates.length*times.length;
  if(count>LIMIT)throw Error('候補点数が多すぎます。日数・時間幅・距離を縮めてください（最大'+LIMIT+'点）');
@@ -129,7 +129,7 @@ export async function searchHorizonLocations(req,options={}){
    // horizon. Earlier, reject known total-disk obstruction.
    if(ray.before===.05?angle>contact.dip+.05:angle>ray.sun.alt+ray.sun.radius)blocked=true;
   }
-  results.push({...p,eye,minute:contact.minute,dip:contact.dip,horizon:Number.isFinite(max)?max:null,missing,status:blocked?'blocked':missing||!Number.isFinite(max)?'unknown':'sample-clear'});
+  results.push({...p,eye,az:sunPosition(req.date,contact.minute,p.lat,p.lon).az,minute:contact.minute,dip:contact.dip,horizon:Number.isFinite(max)?max:null,missing,status:blocked?'blocked':missing||!Number.isFinite(max)?'unknown':'sample-clear'});
  }
  return {kind:'G4',status:'sampled',sampled:raw.length,results,policy:{radius,step,radialSamples:horizonDistances.length,sunsetMinutes:20,azimuthSamples:3}};
 }
