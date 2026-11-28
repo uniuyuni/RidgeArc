@@ -178,6 +178,13 @@ try{
  const afterSky=await page.locator('#ridge').evaluate(c=>Array.from(c.getContext('2d').getImageData(20,20,1,1).data));
  assert.notDeepEqual(afterSky,beforeSky,'clear sky layer changes actual rendered sky');
  await skyLayer.uncheck();
+ const groups=await page.locator('[data-layer-group][open]').evaluateAll(es=>es.map(e=>e.dataset.layerGroup));
+ assert.ok(groups.includes('地形')&&groups.includes('光・大気'));
+ await page.locator('[data-settings-tab=general]').click();await page.locator('[data-settings-tab=layers]').click();
+ assert.deepEqual(await page.locator('[data-layer-group][open]').evaluateAll(es=>es.map(e=>e.dataset.layerGroup)),groups);
+ await page.locator('#close').click();await page.locator('[data-sheet=settings]').click();
+ assert.deepEqual(await page.locator('[data-layer-group][open]').evaluateAll(es=>es.map(e=>e.dataset.layerGroup)),groups);
+ assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('ridgearc.field.openLayerGroups')).sort()),[...groups].sort());
  await page.locator('[data-settings-tab=general]').click();
 
  await page.locator('[data-sun-option="marker"]').check();
@@ -219,6 +226,18 @@ try{
  console.log('Vector terrain:',JSON.stringify(vector));
  assert.ok(vector.center[0]<vector.left[0]-15&&vector.center[0]<vector.right[0]-15,'foreground polygon survives in front of distant terrain');
  assert.ok(vector.colors<15,'polygons must not smear colors across angular samples');
+ const smooth=await page.evaluate(async()=>{
+  const {makeTerrainTexture}=await import('/field-engine.mjs');
+  const far={hi:.08,m:.2,b:-960,d:8000,near:4800};
+  const profile={ground:0,height:1.6,total:Array(1440).fill(Math.atan(.08)*180/Math.PI),surfaces:Array.from({length:1440},()=>({segments:[far],water:[]}))};
+  const view={az:.25,pitch:.85,fov:.75},w=300,h=160;
+  const shade={rows:1,cols:2,depth:[6600,6600],index:[0,1],ambient:[.08,.08,.08],values:[{kind:'shadow',value:0,illumination:{direct:[0,0,0],diffuse:[.05,.05,.05]}},{kind:'lit',value:.5,illumination:{direct:[.5,.5,.5],diffuse:[.05,.05,.05]}}]};
+  const c=makeTerrainTexture(profile,view,w,h,true,shade).getContext('2d');
+  const row=Array.from({length:241},(_,i)=>c.getImageData(i+30,80,1,1).data[0]);
+  return {first:row[0],last:row.at(-1),colors:new Set(row).size,maxJump:Math.max(...row.slice(1).map((v,i)=>Math.abs(v-row[i])))};
+ });
+ console.log('Continuous shading:',JSON.stringify(smooth));
+ assert.ok(smooth.last>smooth.first+15&&smooth.colors>12&&smooth.maxJump<=5,'lighting must vary continuously within one terrain band');
  // Actual loupe opens with the same real solar position used for target selection.
  const currentRidge=page.locator('#ridge'),currentRect=await currentRidge.boundingBox();
  // Directly selecting a known trajectory point avoids changing the camera.
@@ -280,7 +299,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.10/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.10\.1/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
