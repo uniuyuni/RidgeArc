@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {handleTerrainRequest} from '../public/field-terrain-worker.mjs';
 import {sunPosition} from '../public/core.mjs';
+import {fetchWithRetry} from '../public/terrain-store.mjs';
 
 test('FIELD worker returns a profile, reuses retained DEM, and rejects missing ground', async t=>{
  const original=Object.fromEntries(['fetch','createImageBitmap','OffscreenCanvas','postMessage'].map(k=>[k,Object.getOwnPropertyDescriptor(globalThis,k)]));
@@ -23,7 +24,7 @@ test('FIELD worker returns a profile, reuses retained DEM, and rejects missing g
  await request(2,36.7,137.18,3);
  const second=messages.at(-1);
  assert.equal(second.type,'profile');assert.equal(second.id,2);assert.equal(second.height,3);
- assert.ok(second.total[0]<first.total[0]);assert.equal(requests,count);assert.equal(messages.length,1);
+ assert.ok(second.total[0]<first.total[0]);assert.equal(requests,count);assert.equal(messages.filter(m=>m.type==='profile').length,1);assert.ok(messages.slice(0,-1).every(m=>m.type==='progress'&&m.id===2));
  // Full 1440-direction receiver path: no surface segment transfer, date-only reuse.
  const lightRequest=(id,date)=>handleTerrainRequest({data:{id,lat:36.7,lon:137.18,mode:'light',date}});
  await lightRequest(4,'2026-11-30');
@@ -67,4 +68,12 @@ test('Toyama and Tateyama-area solar geometry on 2026-11-30',()=>{
   assert.ok(Math.abs(s.geo-alt)<.02);
   assert.ok(Math.abs(s.radius-radius)<.001);
  }
+});
+
+test('retry transient errors, respect Retry-After, skip missing tiles and stop at limit',async()=>{
+ let n=0;const waits=[],events=[];
+ const ok=await fetchWithRetry('mock',{fetcher:async()=>++n===1?new Response(null,{status:503,headers:{'Retry-After':'2'}}):new Response(null,{status:200}),wait:async ms=>waits.push(ms),onRetry:e=>events.push(e.attempt)});
+ assert.equal(ok.status,200);assert.deepEqual(waits,[2000]);assert.deepEqual(events,[1]);
+ n=0;assert.equal((await fetchWithRetry('mock',{fetcher:async()=>{n++;return new Response(null,{status:404})},wait:async()=>assert.fail('404 must not retry')})).status,404);assert.equal(n,1);
+ n=0;await assert.rejects(fetchWithRetry('mock',{fetcher:async()=>{n++;throw Error('network')},wait:async()=>{}}),/network/);assert.equal(n,4);
 });
