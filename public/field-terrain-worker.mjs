@@ -106,6 +106,7 @@ async function loadTerrain(target,isCurrent,rayCount=N,includeWater=true,eyeHeig
  }
  const refined=await refineRidges({target,distances,heights,ground:ground.h,step,eyeHeight,isCurrent,fetchTile:key=>getTile(key,requests),onProgress:(done,total)=>{if(isCurrent())postMessage({type:'progress',id:generation,message:'稜線詳細DEM '+done+'/'+total+' タイル',done,total})}});
  if(!refined||!isCurrent())return null;
+ for(let i=0;i<complete.length;i++)if(refined.rows[i].some(p=>!Number.isFinite(p.h)))complete[i]=false;
  const detail=Object.entries(stats).filter(([k,v])=>v>0&&['1m','5m A','5m B','5m C','10m'].includes(k)).map(([k])=>k).join(' / ');
  return {key:pointKey(target),distances,heights,complete,water,ground:ground.h,source:ground.source,detail,coverage:count?valid/count:0,failedTiles,firstTileError,refined:refined.rows,refinement:refined.stats,eyeHeight};
 }
