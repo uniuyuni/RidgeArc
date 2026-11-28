@@ -52,8 +52,12 @@ export function mountMapSolarOverlay(map,L,readState){
    reserved.push([x,y+13]);dome.append(circle(x,y,2.5,{fill:'#ffcf72',stroke:'#694e25','stroke-width':.7}),label(x,y+13,clock(p.minute),'map-solar-time'));
   }
   if(bearing){
-   if(trajectory)drawPath({segments:path.segments.map(segment=>segment.map(p=>projectSky(p.az,0)))},{stroke:'#d9a94e','stroke-width':2,'stroke-dasharray':'4 4',class:'sky-bearing-track'});
-   if(sun){const [bx,by]=xy(projectSky(path.current.az,0));dome.append(line(0,0,bx,by,{stroke:'#d9a94e','stroke-width':1.5,'stroke-dasharray':'5 4',class:'sky-bearing-ray'}));}
+   if(trajectory){
+    const segments=[];
+    for(const arc of path.segments){let segment=[],previous=null;for(const p of arc){const q=projectSky(p.az,0);if(previous&&Math.hypot(q.x-previous.x,q.y-previous.y)>.765){if(segment.length>1)segments.push(segment);segment=[]}segment.push(q);previous=q}if(segment.length>1)segments.push(segment)}
+    drawPath({segments},{stroke:'#d9a94e','stroke-width':2,'stroke-dasharray':'4 4',class:'sky-bearing-track'});
+   }
+   if(sun&&Math.abs(path.current.alt)<89.99){const [bx,by]=xy(projectSky(path.current.az,0));dome.append(line(0,0,bx,by,{stroke:'#d9a94e','stroke-width':1.5,'stroke-dasharray':'5 4',class:'sky-bearing-ray'}));}
   }
   if(visible){
    dome.append(line(0,0,sx,sy,{stroke:'#b88b3d','stroke-width':1,'stroke-dasharray':'3 4'}));
