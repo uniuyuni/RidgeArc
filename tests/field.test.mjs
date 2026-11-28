@@ -11,7 +11,7 @@ test('FIELD worker returns a profile, reuses retained DEM, and rejects missing g
  const pixels=new Uint8ClampedArray(256*256*4);
  for(let i=0;i<pixels.length;i+=4){pixels[i+2]=100;pixels[i+3]=255}
  globalThis.fetch=async()=>{requests++;return missing?{ok:false,status:404}:{ok:true,status:200,blob:async()=>({})}};
- globalThis.createImageBitmap=async()=>({close(){}});
+ globalThis.createImageBitmap=async()=>({width:256,height:256,close(){}});
  globalThis.OffscreenCanvas=class{getContext(){return {drawImage(){},getImageData(){return {data:pixels}}}}};
  globalThis.postMessage=m=>messages.push(m);
  const request=(id,lat,lon,height)=>handleTerrainRequest({data:{id,lat,lon,height}},8);

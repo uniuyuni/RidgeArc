@@ -230,7 +230,7 @@ try{
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>el.parentElement.id),'stage');
  assert.equal(await page.locator('#acquisitionOverlay').evaluate(el=>getComputedStyle(el).position),'absolute');
  assert.equal(await page.locator('#stage #acquisitionOverlay .acquisitionTask').count(),3);
- assert.match(await page.locator('header .demo').innerText(),/0\.8\.1/);
+ assert.match(await page.locator('header .demo').innerText(),/0\.8\.2/);
  await page.waitForFunction(()=>document.querySelector('#fieldAcquisition').hidden||['partial','failed'].includes(document.querySelector('#fieldAcquisition').dataset.phase),null,{timeout:5000});
  // Exercise a different actual result through the canvas (not just the list).
  const otherLabel=labels.find(l=>l.slice(0,10)!==label.slice(0,10));
@@ -267,6 +267,31 @@ try{
  const lo=await page.locator('#rangeStart').inputValue(),hi=await page.locator('#rangeEnd').inputValue();
  assert.ok(lo<=otherLabel.slice(0,10)&&otherLabel.slice(0,10)<=hi);
  await page.locator('#close').click();
+ if(!live){
+  const failure=await context.newPage();
+  await failure.addInitScript(()=>{
+   const NativeWorker=window.Worker;
+   window.Worker=class extends NativeWorker{
+    constructor(url,options){
+     if(String(url).includes('field-terrain-worker.mjs')){
+      super(URL.createObjectURL(new Blob([`self.onmessage=e=>{if(!e.data.cancel)self.postMessage({type:'error',id:e.data.id,message:'dem_png/14/14400/6380：HTTP 503'})}`],{type:'text/javascript'})));
+     }else super(url,options);
+    }
+   };
+  });
+  await failure.goto('http://127.0.0.1:'+server.address().port+'/field/');
+  await failure.locator('#fieldAcqDetail').waitFor({state:'visible'});
+  await failure.locator('#subjectAcqDetail').waitFor({state:'visible'});
+  assert.match(await failure.locator('#fieldAcqDetail').innerText(),/dem_png.*HTTP 503/);
+  assert.match(await failure.locator('#subjectAcqDetail').innerText(),/HTTP 503/);
+  assert.equal(await failure.locator('#fieldRetry').isVisible(),true);
+  await failure.waitForTimeout(2700);
+  assert.equal(await failure.locator('#fieldAcqDetail').isVisible(),true,'failure must persist beyond success auto-hide');
+  await failure.locator('#fieldRetry').click();
+  await failure.locator('#fieldAcqDetail').waitFor({state:'visible'});
+  assert.match(await failure.locator('#fieldAcqDetail').innerText(),/HTTP 503/);
+  await failure.close();
+ }
  assert.deepEqual(errors,[]);
  console.log(live?'LIVE GSI smoke passed; not an accuracy reference':'Chromium synthetic DEM integration passed');
 }finally{await browser?.close();await new Promise(r=>server.close(r))}
